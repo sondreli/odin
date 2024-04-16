@@ -1,0 +1,27 @@
+;; shadow-cljs configuration
+{:source-paths ["src"]
+
+ :dependencies[[reagent "0.9.1"]
+               [re-frame "0.10.7"]
+               [cljs-ajax "0.8.4"]
+               [bidi "2.1.6"]
+               [kibu/pushy "0.3.8"]
+               [com.cemerick/url "0.1.1"]
+               [day8.re-frame/http-fx "0.2.4"]
+               [org.clojure/core.async "1.3.610"]
+               [com.taoensso/timbre "4.10.0"]]
+
+ :dev-http {4000 "public/"}
+
+ :builds {:app {:output-dir "public/js"
+                :asset-path "/js"
+                :target :browser
+                :modules {:main {:init-fn client.core/main!}}
+                :js-options {:resolve {"d3" {:target :npm
+                                             :require "d3/dist/d3.js"}}}
+                :devtools {:after-load client.core/reload!
+                           :http-root "public"
+                           :http-port 4000}}}
+
+
+ }

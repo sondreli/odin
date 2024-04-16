@@ -1,59 +1,72 @@
 (ns odin.core
   (:import java.util.Base64)
   (:require [clojure.data.json :as json]
-;            [avro2sql.io :as io]
             [clojure.tools.trace :as trace]
             [clojure.string :as s]
             [clojure.pprint :as pp]
             [clojure.java.browse :as browse :refer [browse-url]]
+            [clojure.java.io :as io]
+            [clj-http.client :as client]
+            [compojure.core :as cpj]
+            [odin.services.auth-service :as auth]
+            [odin.services.transaction-service :as transaction]
+            [odin.services.category-service :as category]
             [ring.adapter.jetty :as jetty]
             [ring.util.codec :as codec]
+            [ring.middleware.params :as rmp]
+            [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
+            [ring.middleware.multipart-params :as rmmp]
+            [ring.middleware.cors :refer [wrap-cors]]
             [clojure.test :as test :refer [deftest is do-report]]))
 
-(def client_id "06b5fe9c-5d99-4950-ae94-11b112154a44")
 
-(def client_secret "173cdbcd-2349-4179-897e-d4e79d6f2bf7")
-
-;; Authenticate and authorize
-(defn authenticate [state client_id]
-               ;state=$1
-  (println "open in browser, authenticate and copy code from the return uri")
-  (let [;redirect-url (ring.util.codec/url-encode "https://localhost")
-        redirect-url "https://localhost"
-        url (format "https://api-auth.sparebank1.no/oauth/authorize?client_id=%s&state=%s&redirect_uri=%s&finInst=fid-ostlandet&response_type=code" client_id state redirect-url)]
-    (println url)
-    (browse-url url)))
-
-(defn run_authenticate []
-  (authenticate "123456" client_id)
-  (println "post authenticate"))
-
-(defn handler [request]
+(defn token_handler [request]
   (pp/pprint request)
-  {:status 200
-   :headers {"Content-Type" "text/html"}
-   :body "Hello world"})
+  (let [auth_data (auth/extract_authenticate_data request)]
+        ; build token request and retrieve token
+        ; store access_token and refresh_token in atoms
+    (if auth_data
+      (let [{code :code state :state} auth_data
+            _ (println (str "code : " code))
+            _ (println (str "state : " state))
+            tokens (auth/make_tokens auth/client_id auth/client_secret code state "https://localhost")]
+        (reset! auth/token_response_atom tokens)
+        (println "past store")
+        {:status 200
+         :headers {"Content-Type" "text/html"}
+         :body "Authentication successful"})
+      {:status 200
+       :headers {"Content-Type" "text/html"}
+       :body "Second respone"})))
+
+;(make_token_request "id" "secret" "code" "state" "redirect_url:}))
+
+(cpj/defroutes app
+  (cpj/GET "/" params token_handler) ; misses some favicon.ico requests
+  (cpj/GET "/transactions/:id/details" [id] (partial transaction/transaction_details_handler id))
+  (cpj/GET "/transactions" params transaction/transaction_handler)
+  (cpj/GET "/categories" params category/categories-handler)
+  (cpj/POST "/categories" params category/store-categories-handler)
+  )
+
+(def app-handler
+  (-> app
+      (wrap-json-body {:key-fn keyword})
+      (wrap-cors :access-control-allow-origin [#"http://localhost:4000"]
+                 :access-control-allow-methods [:get :put :post :delete])
+      ;; rmp/wrap-params
+      ;; rmmp/wrap-multipart-params
+      ))
 
 (defn run_server []
-  (jetty/run-jetty handler
+  (jetty/run-jetty app-handler
      {:port 8080
       :join? true}))
 
-;; Redirect 80 to 8080
-;; iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
-;; iptables -t nat -I OUTPUT -p tcp -d 127.0.0.1 --dport 80 -j REDIRECT --to-ports 8080)
-;; need to set up nginx as a reverse proxy in order to recieve traffic on https
-;; then it can redirect to 8080 directly. omg
-
-
-(defn run [opts]
-  (println (authenticate "123456" client_id)))
-
 (defn -main [& args]
-  ;;(.start (Thread. run_authenticate))
-  ;; (jetty/run-jetty handler
-  ;;                     {:port 80
-  ;;                      :join? true})
   (.start (Thread. run_server))
-  (authenticate "123456" client_id)
+  (transaction/get-all-transactions)
+
   (println "Post server?"))
+
+;(-main)
