@@ -21,7 +21,12 @@ sudo systemctl restart nginx
 * shadow-cjs-template
 A simple template for my shadow-cljs experiments
 
-## Fronend Usage
+## Backend usage
+
+To start development server, run: clj -X odin.core/-main
+
+
+## Fronend usage
 
 Install dependencies:
 
@@ -36,3 +41,7 @@ Run Shadow CLJS dev server (and REPL):
 In another terminal, recompile Tailwind CSS if it changes:
 
      npm run watch:css
+
+## Database
+Using datomic
+Specify path to database file in ~/.datomic/local.edn 

@@ -150,29 +150,50 @@
 ;; absolute can be when all units are known
 ;; long-view can be simple in to first round and only be the parent time-unit
 ;; then the function only need time-unit and unit position
-(defn init-long-view [] ;[time-unit time-index]
-  (let [time-unit (case (count period-array)
+(defn have-next-parent-unit? [start end]
+  (let [a (last (butlast start))
+        b (last (butlast end))]
+    (> b a)))
+
+(defn inc-parent-unit [view-start]
+  (let [index (-> view-start count (- 2))
+        index-last (-> view-start count dec)
+        a (get view-start index)]
+    (-> view-start
+        (assoc index (inc a))
+        (assoc index-last 0))))
+
+(defn long-view [long-view-start long-view-end] ;[time-unit time-index]
+  (let [time-unit (case (count long-view-start)
                     1 :year
                     2 :month
                     3 :day)
-        year (first period-array);(current-year)
-        long-view-length (case time-unit
-                           :year 10
-                           :month 12
-                           :day 31)
-        time-index (last period-array)
-        month-indices (->> (range (-> long-view-length - (+ time-index) inc)
-                                  (inc time-index))
-                           (map #(if (neg? %)
-                                   [(dec year) (+ % long-view-length)]
-                                   [year %])))
+        number-of-units (case time-unit
+                          :year 10
+                          :month 12
+                          :day 31)
+        have-next-parent-unit (have-next-parent-unit? long-view-start long-view-end)
+        start (last long-view-start)
+        end (if have-next-parent-unit (dec number-of-units) (last long-view-end))
+        indices (->> (range start (inc end))
+                     (map #(concat(butlast long-view-start) [%])))
         ;; have to adjust month-indices and connect them with correct year
         ;;periods (map (fn [month-index] (period month-index year)) month-indices)
         ]
-    month-indices))
+    (if have-next-parent-unit
+      (concat indices (long-view (inc-parent-unit long-view-start) long-view-end))
+      indices)
+    ))
+
 
 
 ;; time-unit is specified by period-array length
 ;; if long-view contains time elements that has not happened, make it relative
 ;; only specify long-view, then short-view will be derived
-(init-long-view [2024 8] [2024 9] 12)
+(long-view [2024 0] [2024 12])
+
+(defn init-long-view []
+  (let [end-year (current-year)
+        month (current-month)
+        start-year (- end-year 1)]
+    (long-view [start-year month] [end-year month])))
