@@ -28,7 +28,7 @@
 
 (defn first-day-of-month [month-index year]
   (let [month (-> month-index js/parseInt)
-        first-day (js/Date. year month 1)]
+        first-day (js/Date. (str year) month 1)]
     first-day))
 
 (defn last-day-of-month [month-index]
@@ -54,6 +54,22 @@
   (let [today (js/Date.)
         tomorrow (.setDate today (-> today .getDate inc))]
     (js/Date. tomorrow)))
+
+(defn year-of-timestamp [timestamp]
+  (let [stamp-date (js/Date. timestamp)]
+    (.getFullYear stamp-date)))
+
+(defn year-of-period [period]
+  (-> period :start .getFullYear))
+
+(defn month-of-timestamp [timestamp]
+  (let [stamp-date (js/Date. timestamp)]
+    (.getMonth stamp-date)))
+
+(defn period-from-year [year]
+  (let [start (js/Date. year 0 1)
+        end (js/Date. (inc year) 0 1)]
+    {:start start :end end}))
 
 (defn transaction-in-period? [transaction start end]
 ;;   (let [trans-date (-> transaction :classificationInput :date datetime2date js/Date.)
@@ -89,13 +105,40 @@
   (let [unixtime (-> localdate .getTime Math/floor)]
     unixtime))
 
+(defn localdate-str->unixtime [date-str]
+  (localdate->unixtime (js/Date. date-str)))
+
+(defn localdate-str->month [date-str]
+  (let [date (js/Date. date-str)
+        month (.getMonth date)]
+    month))
+
+(defn localdate-str->year [date-str]
+  (let [date (js/Date. date-str)
+        year (.getFullYear date)]
+    year))
+
 (defn transaction-years [transactions]
   (let [first-year (-> transactions first :date js/Date. .getFullYear)
         last-year (-> transactions last :date js/Date. .getFullYear)
         unique-years (->> (range (int first-year) (-> last-year int inc))
-                          reverse
                           (into []))]
     unique-years))
+
+(defn last-month-of-year [year]
+  (println "last-month-of-year: " (type year) (type (current-year)) year (current-year))
+  (if (= year (js/parseInt (current-year)))
+      (js/parseInt (current-month))
+      11))
+
+(defn set-period-to-year [period year]
+  (let [start-month (-> period :start .getMonth)
+        start-date (-> period :start .getDate)
+        start (js/Date. year start-month start-date)
+        end-month (-> period :end .getMonth)
+        end-date (-> period :end .getDate)
+        end (js/Date. year end-month end-date)]
+    {:start start :end end}))
 
 (defn get-date-label [unixtime]
   (let [date (-> unixtime js/Date. .getDate)]
@@ -163,7 +206,7 @@
         (assoc index (inc a))
         (assoc index-last 0))))
 
-(defn long-view [long-view-start long-view-end] ;[time-unit time-index]
+(defn long-view [long-view-start long-view-end]
   (let [time-unit (case (count long-view-start)
                     1 :year
                     2 :month
@@ -177,12 +220,12 @@
         end (if have-next-parent-unit (dec number-of-units) (last long-view-end))
         indices (->> (range start (inc end))
                      (map #(concat(butlast long-view-start) [%])))
-        ;; have to adjust month-indices and connect them with correct year
-        ;;periods (map (fn [month-index] (period month-index year)) month-indices)
+        periods (map (fn [[year month-index]] (period month-index year)) indices)
+        ;; periods indices
         ]
     (if have-next-parent-unit
-      (concat indices (long-view (inc-parent-unit long-view-start) long-view-end))
-      indices)
+      (concat periods (long-view (inc-parent-unit long-view-start) long-view-end))
+      periods)
     ))
 
 
@@ -190,10 +233,38 @@
 ;; time-unit is specified by period-array length
 ;; if long-view contains time elements that has not happened, make it relative
 ;; only specify long-view, then short-view will be derived
-(long-view [2024 0] [2024 12])
+(long-view [2024 0] [2025 0])
 
 (defn init-long-view []
-  (let [end-year (current-year)
-        month (current-month)
-        start-year (- end-year 1)]
+  (let [end-year (js/parseInt (current-year))
+        month (js/parseInt (current-month))
+        start-year (-> end-year (- 1))]
     (long-view [start-year month] [end-year month])))
+
+(defn long-view-years [years]
+  (->> years
+       (map period-from-year)))
+
+(defn long-view-months [month-period]
+  (let [year (year-of-timestamp (:start month-period))
+        last-month-of-year (last-month-of-year year)]
+    (long-view [year 0] [year last-month-of-year])))
+
+(defn days-in-period [period]
+  (let [time-difference (- (-> period :end .getTime)
+                           (-> period :start .getTime))
+        differnece-in-days (Math/round (/ time-difference (-> 1000 (* 3600) (* 24))))]
+    differnece-in-days))
+
+(defn time-unit-from-period [period]
+  (let [days (days-in-period period)]
+    (cond
+      (<= days 31) :month
+      (<= days 366) :year
+      :else :all-years)))
+
+(defn long-view-from-period [db period time-unit]
+  (case time-unit
+    :month (long-view-months period)
+    :year (long-view-years (-> db :period-selector :transaction-years))
+    :all-years []))

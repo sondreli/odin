@@ -37,6 +37,11 @@
    (:period db)))
 
 (reg-sub
+ :period-selector
+ (fn [db _]
+   (:period-selector db)))
+
+(reg-sub
  :transaction-years
  (fn [db _]
    (-> db :period-selector :transaction-years)))

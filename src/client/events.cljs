@@ -57,7 +57,7 @@
    (let [transactions (js->clj response)
          _ (println "process-response transactions: " (count transactions))
          transaction-years (date/transaction-years transactions)
-         period (utils/period (:period-selector db))
+         period (:period db)
          updated-period-selector (-> db
                                      :period-selector
                                      (assoc :transaction-years transaction-years))]

@@ -21,25 +21,47 @@
   ;; )
 
 (defn period-selector []
-  (let [period @(subscribe [:period])
+  (let [period-selector @(subscribe [:period-selector])
         transaction-years @(subscribe [:transaction-years])
-        selected-index (if (some? (:month-index period)) (:month-index period) (date/current-month))]
+        long-view (:long-view period-selector)
+        selected-year (date/year-of-period (period-selector :selected-period))
+        label-fx (if (-> period-selector :time-unit (= :year))
+                   date/localdate-str->year
+                   date/localdate-str->month)]
     [:div
-     [:input {:type "radio" :id "radio-year-length" :name "select-period-length"
-              :on-click #(dispatch [:set-period-length :a-year])}]
-     [:label {:for "radio-year-length"} "Year"]
-     [:input {:type "radio" :id "radio-month-length" :name "select-period-length"
-              :on-click #(dispatch [:set-period-length :a-month])}]
-     [:label {:for "radio-month-length"} "Month"]
-     [:select {:on-change #(dispatch [:set-period-year (-> % .-target .-value)])}
-      (for [[index year] (map-indexed vector transaction-years)]
-        [:option {:key index} year])]
-     [:select {:on-change #(dispatch [:set-period-month (-> % .-target .-value)])}
-      (for [[index month] (map-indexed vector ["January" "February" "Mars" "April" "May" "June" "July" "August" "September" "October" "November" "Descember"])]
-        [:option (if (= index selected-index)
-                   {:key index :value index :selected "selected"}
-                   {:key index :value index}) month])]]
-    ))
+     [:div
+      ; each unit sets a new period
+      ; from the period, the long-view can be derived
+      ; long-view could also be described with from, to indices
+      [:input (merge {:type "radio" :id "radio-year-length" :name "select-period-length"
+                      :on-click #(dispatch [:set-time-unit :year])}
+                     (if (-> period-selector :time-unit (= :year))
+                       {:checked true}
+                       {}))]
+      [:label {:for "radio-year-length"} "Year"]
+      [:input (merge {:type "radio" :id "radio-month-length" :name "select-period-length"
+                      :on-click #(dispatch [:set-time-unit :month])}
+                     (if (-> period-selector :time-unit (= :month))
+                       {:checked true}
+                       {}))]
+      [:label {:for "radio-month-length"} "Month"]
+      ]
+     (when (-> period-selector :time-unit (= :month))
+       [:div
+        ; should update the period-selector with new long-view
+        ; new period can be derived from current period and new year
+        ; new period -> new long view
+        ; current period -> select new year -> find new period -> call navigate -> period selector is updated
+        ; -> and long view is updated -> which triggers the view -> which will update the select and long-view
+        [:select {:on-change #(dispatch [:set-period-year (-> % .-target .-value)])}
+         (for [[index year] (map-indexed vector transaction-years)]
+           [:option {:key index :selected (when (= year selected-year) "selected")} year])]])
+     [:div
+      (for [period long-view]
+       [:span {:on-click #(dispatch [:navigate [period nil nil]])
+               :style {:background-color (if (= period (:selected-period period-selector)) "#88f" "#fff")}}
+        (str (label-fx (:start period)) " ")])]
+     ]))
 
 (defn filter-path []
   (let [html-path (->> @(subscribe [:filter-path])

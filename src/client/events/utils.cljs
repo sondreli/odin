@@ -73,13 +73,13 @@
         (assoc-in [:displayed-transactions-data :displayed-transactions] displayed-transactions)
         )))
 
-(defn period [period-selector]
-  (println "period")
-  (println period-selector)
-  (if (-> period-selector :length (= :a-month))
-    (date/month-period (-> period-selector :a-month :month-index)
-                 (-> period-selector :a-month :year))
-    (date/last-year-period)))
+;; (defn period [period-selector]
+;;   (println "period")
+;;   (println period-selector)
+;;   (if (-> period-selector :length (= :a-month))
+;;     (date/month-period (-> period-selector :a-month :month-index)
+;;                  (-> period-selector :a-month :year))
+;;     (date/last-year-period)))
 
 (defn apply-period [db period-selector period]
     (println "apply-period")
@@ -106,16 +106,18 @@
 (defn summed-categories [db period-transactions]
   (sum-categoires (:categories db) period-transactions))
 
-; return map with what to update?
 (defn apply-period2 [db period]
-    (println "apply-period2")
   (if (some? period)
-    (let [period-transactions (period-transactions db period)
+    (let [time-unit (date/time-unit-from-period period)
+          long-view (date/long-view-from-period db period time-unit)
+          period-transactions (period-transactions db period)
           displayed-transactions (->> period-transactions
                                       (category/mark-transactions (db :builder-category)))]
       (-> db
           (assoc :period period)
-        ;;   (assoc :period-selector ...)
+          (assoc-in [:period-selector :selected-period] period)
+          (assoc-in [:period-selector :long-view] long-view)
+          (assoc-in [:period-selector :time-unit] time-unit)
           (assoc :period-transactions period-transactions)
           (assoc :summed-categories (summed-categories db period-transactions))
           (assoc-in [:displayed-transactions-data :displayed-transactions] displayed-transactions)
