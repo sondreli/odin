@@ -6,9 +6,27 @@
 ## nginx as revers proxy
 recieves traffic on 80 and 443 and redirects it to 8080
 
-config: /etc/nginx/sites-available/odin_reverse_proxy
+config at: /etc/nginx/sites-available/odin_reverse_proxy
+```
+server {
+        listen 80;
+        listen [::]:80;
+        listen 443 ssl;
+        listen [::]:443 ssl;
 
-test key and certificat generated with:
+        server_name localhost;
+        ssl_certificate /etc/nginx/odin/odin.crt;
+        ssl_certificate_key /etc/nginx/odin/odin.key;
+        keepalive_timeout 70;
+
+        location / {
+                proxy_pass http://localhost:8080;
+                include proxy_params;
+        }
+}
+```
+
+generate test key and certificat with:
 ```
 openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365 -subj 'CN=localhost' -nodes
 -nodes means no password on private key
@@ -18,6 +36,8 @@ After doing a change to the config, restart the service:
 ```
 sudo systemctl restart nginx
 ```
+
+
 * shadow-cjs-template
 A simple template for my shadow-cljs experiments
 
