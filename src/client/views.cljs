@@ -132,10 +132,12 @@
   (-> elm  .-target (. closest ".row") .-attributes .-value .-value))
 
 (defn categories []
-  [:div
+  (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))]
+    [:div
    [:h3 "Categories"]
    [:table
-    (for [category @(subscribe [:summed-categories])]
+    [:tbody {:id "categories-tbody"}
+     (for [[index category] indexed-categories]
       [:tr {:value (:name category) :key (:name category) :class "row"}
        [:td {:bgcolor (:color category)} (:name category)]
        [:td {:align "right"} (gstring/format "%.2f"
@@ -144,9 +146,12 @@
              "View"]]
        [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
              "Edit"]]
+       [:td [:a {:on-click #(dispatch [:edit-category2 (get-value-of-parent-row %) index])}
+             "Edit2"]]
        [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
              "Del"]]])]
-   ])
+    ]])
+  )
 
 (defn loading-label []
   (let [loading @(subscribe [:loading])]

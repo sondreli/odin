@@ -25,6 +25,7 @@ server {
         }
 }
 ```
+after config is created, make symlink from config in sites-available to sites-enabled
 
 generate test key and certificat with:
 ```

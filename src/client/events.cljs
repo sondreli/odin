@@ -196,6 +196,44 @@
          (assoc :builder-category edit-category)
          (assoc :categories updated-categories)))))
 
+(defn add-table-row [index table-index-offset text]
+  (let [tbody (. js/document getElementById "categories-tbody")
+        row (. tbody insertRow (+ index table-index-offset 1))
+        new-cell (. row insertCell 0)
+        _ (. new-cell setAttribute "colspan" "3")
+        ;; _ (. row addEventListener "click" #(dispatch [:toggle-transaction-row index]))
+        name-input (. js/document createElement "input")
+        _ (goog.object/set name-input "type" "text")
+        _ (goog.object/set name-input "value" text)
+        textarea (. js/document createElement "textarea")
+        _ (goog.object/set textarea "type" "text")
+        _ (goog.object/set textarea "rows" 5)
+        ]
+    (. new-cell appendChild textarea)))
+
+(defn delete-table-row [index table-index-offset]
+  (let [tbody (. js/document getElementById "categories-tbody")
+        row (. tbody deleteRow (+ index table-index-offset 1))
+        ]))
+
+
+(reg-event-db
+ :edit-category2
+ (fn
+   [db [_ category-name index]]
+   (println "edit-category2 " category-name index)
+   (let [open-category-row (:open-category-row db)
+         _ (println open-category-row)
+         open-row-index (when (or (not= index open-category-row)
+                                  (nil? open-category-row))
+                          index)]
+     (when (some? open-category-row)
+       (delete-table-row open-category-row 0))
+     (when (some? open-row-index)
+       (add-table-row open-row-index 0 category-name))
+     
+     (assoc db :open-category-row open-row-index))))
+
 (reg-event-fx
  :request-all-transactions
  (fn

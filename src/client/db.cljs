@@ -18,6 +18,8 @@
 ;; filter-path
 (s/def ::filter-path (s/coll-of string? :kind vector?))
 
+(s/def ::open-category-row number?)
+
 ; period-length
 ; what period
 ; one-year-back year-x
@@ -30,7 +32,8 @@
 
 (s/def ::db (s/keys :req-un [::period
                              ::period-selector
-                             ::filter-path]))
+                             ::filter-path
+                             ::open-category-row]))
 
 (def default-db
     (let [month-index (date/current-month)
@@ -47,5 +50,6 @@
        :period {:start (date/first-day-of-month month-index year)
                 :end (date/first-day-of-next-month month-index year)}
        :filter-path []
+       :open-category-row nil
        :displayed-transactions-data {:display-option :table}})
   )
