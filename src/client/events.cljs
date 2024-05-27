@@ -10,6 +10,7 @@
             [client.services.chart-service :as chart]
             [re-frame.core :refer [reg-event-db reg-event-fx after dispatch]]
             [clojure.string :as s]
+            [goog.object :as g]
             [common.category-service :as category]
             ["d3" :as d3]
             
@@ -196,24 +197,53 @@
          (assoc :builder-category edit-category)
          (assoc :categories updated-categories)))))
 
-(defn add-table-row [index table-index-offset text]
-  (let [tbody (. js/document getElementById "categories-tbody")
-        row (. tbody insertRow (+ index table-index-offset 1))
+(defn add-textarea [tbody index]
+  (let [row (. tbody insertRow (+ index 1))
         new-cell (. row insertCell 0)
-        _ (. new-cell setAttribute "colspan" "3")
+        ;; _ (. new-cell setAttribute "colspan" "3")
         ;; _ (. row addEventListener "click" #(dispatch [:toggle-transaction-row index]))
-        name-input (. js/document createElement "input")
-        _ (goog.object/set name-input "type" "text")
-        _ (goog.object/set name-input "value" text)
         textarea (. js/document createElement "textarea")
-        _ (goog.object/set textarea "type" "text")
-        _ (goog.object/set textarea "rows" 5)
+        _ (g/set textarea "type" "text")
+        _ (g/set textarea "rows" 5)
+        _ (g/set textarea "style" "width: 100%")
         ]
     (. new-cell appendChild textarea)))
 
-(defn delete-table-row [index table-index-offset]
+(defn create-option [text]
+  (let [option (.createElement js/document "option")]
+    (g/set option "value" text)
+    (g/set option "text" text)
+    option))
+
+(defn enable-editor [index table-index-offset text]
   (let [tbody (. js/document getElementById "categories-tbody")
-        row (. tbody deleteRow (+ index table-index-offset 1))
+
+        name-input (. js/document createElement "input")
+        _ (g/set name-input "type" "text")
+        _ (g/set name-input "value" text)
+        color-selector (.createElement js/document "select")
+        options (->> ["blue" "green" "red"]
+                     (map create-option)
+                     (map #(.appendChild color-selector %))
+                     doall)
+        this-first-td (-> tbody .-rows (.item index) .-cells (.item 0))
+        _ (g/set this-first-td "innerHTML" "")
+        _ (.appendChild this-first-td name-input)
+        _ (.appendChild this-first-td color-selector)
+
+        _ (.log js/console tbody)
+        _ (.log js/console this-first-td)
+        ]
+    (add-textarea tbody index)))
+
+(defn disable-editor [index category-name]
+  (let [tbody (. js/document getElementById "categories-tbody")
+        textarea-row (. tbody deleteRow (+ index 1))
+        first-td (-> tbody .-rows (.item index) .-cells (.item 0))
+        _ (.log js/console first-td)
+        _ (.removeChild first-td (.-lastChild first-td))
+        _ (.removeChild first-td (.-lastChild first-td))
+        _ (g/set first-td "innerHTML" category-name)
         ]))
 
 
@@ -223,14 +253,13 @@
    [db [_ category-name index]]
    (println "edit-category2 " category-name index)
    (let [open-category-row (:open-category-row db)
-         _ (println open-category-row)
          open-row-index (when (or (not= index open-category-row)
                                   (nil? open-category-row))
                           index)]
      (when (some? open-category-row)
-       (delete-table-row open-category-row 0))
+       (disable-editor open-category-row category-name))
      (when (some? open-row-index)
-       (add-table-row open-row-index 0 category-name))
+       (enable-editor open-row-index 0 category-name))
      
      (assoc db :open-category-row open-row-index))))
 
