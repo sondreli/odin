@@ -131,25 +131,68 @@
 (defn get-value-of-parent-row [elm]
   (-> elm  .-target (. closest ".row") .-attributes .-value .-value))
 
+(defn category-editor [category]
+  [:td {:bgcolor (:color category)} [:input {:type "text" :placeholder "Navn"
+                                             :value (:name category)}]])
+(defn category-row [index category]
+  [
+   [:tr {:value (:name category) :key (:name category) :class "row"} 
+   [:td {:bgcolor (:color category)} (:name category)]
+   [:td {:align "right"} (gstring/format "%.2f"
+                                         (-> category :amount (* 100) Math/round (/ 100)))]
+   [:td [:a {:on-click #(dispatch [:view-category (get-value-of-parent-row %)])}
+         "View"]]
+   [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
+         "Edit"]]
+   [:td [:a {:on-click #(dispatch [:edit-category2 (get-value-of-parent-row %) index])}
+         "Edit2"]]
+   [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
+         "Edit3"]]
+   [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
+         "Del"]]]
+   ]
+  )
+
+(defn edit-category-row [index category]
+  [[:tr {:value (:name category) :key (:name category) :class "row"}
+    [:td {:bgcolor (:color category)} [:input {:type "text" :placeholder "Navn"
+                                               :value (:name category)}]]
+    [:td {:align "right"} (gstring/format "%.2f"
+                                          (-> category :amount (* 100) Math/round (/ 100)))]
+    [:td [:a {:on-click #(dispatch [:view-category (get-value-of-parent-row %)])}
+          "View"]]
+    [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
+          "Edit"]]
+    [:td [:a {:on-click #(dispatch [:edit-category2 (get-value-of-parent-row %) index])}
+          "Edit2"]]
+    [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
+          "Edit3"]]
+    [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
+          "Del"]]]
+   [:tr
+    [:td
+     [:textarea {:type "text"
+                 :rows 5}]]]]
+   )
+
 (defn categories []
-  (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))]
+  (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))
+        builder-category @(subscribe [:builder-category])
+        edit-category? (fn [category] (= (:name category) (:name builder-category)))]
     [:div
    [:h3 "Categories"]
    [:table
     [:tbody {:id "categories-tbody"}
-     (for [[index category] indexed-categories]
-      [:tr {:value (:name category) :key (:name category) :class "row"}
-       [:td {:bgcolor (:color category)} (:name category)]
-       [:td {:align "right"} (gstring/format "%.2f"
-                                             (-> category :amount (* 100) Math/round (/ 100)))]
-       [:td [:a {:on-click #(dispatch [:view-category (get-value-of-parent-row %)])}
-             "View"]]
-       [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
-             "Edit"]]
-       [:td [:a {:on-click #(dispatch [:edit-category2 (get-value-of-parent-row %) index])}
-             "Edit2"]]
-       [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
-             "Del"]]])]
+     (mapcat (fn [[index category]]
+               (if (edit-category? category)
+                 (edit-category-row index category)
+                 (category-row index category))) indexed-categories)
+    ;;  (for [[index category] indexed-categories]
+    ;;    (if (edit-category? category)
+    ;;      (edit-category-row index category)
+    ;;      (category-row index category))
+    ;;    )
+     ]
     ]])
   )
 

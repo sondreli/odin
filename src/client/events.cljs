@@ -278,6 +278,16 @@
         ;;  (assoc :categories updated-categories)
          ))))
 
+(reg-event-db
+ :edit-category3
+ (fn
+   [db [_ category-name index]]
+   (let [current-builder-category (:builder-category db)
+         new-builder-category (when (not= category-name (:name current-builder-category))
+                                (some #(when (= category-name (:name %)) %) (:categories db)))]
+     (-> db
+         (assoc :builder-category new-builder-category)))))
+
 (reg-event-fx
  :request-all-transactions
  (fn
