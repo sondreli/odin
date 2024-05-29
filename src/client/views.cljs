@@ -155,8 +155,9 @@
 
 (defn edit-category-row [index category]
   [[:tr {:value (:name category) :key (:name category) :class "row"}
-    [:td {:bgcolor (:color category)} [:input {:type "text" :placeholder "Navn"
-                                               :value (:name category)}]]
+    [:td {:bgcolor (:color category)}
+     [:input {:type "text" :placeholder "Navn" :value (:name category)}]
+     (color-selector)]
     [:td {:align "right"} (gstring/format "%.2f"
                                           (-> category :amount (* 100) Math/round (/ 100)))]
     [:td [:a {:on-click #(dispatch [:view-category (get-value-of-parent-row %)])}
@@ -172,7 +173,8 @@
    [:tr
     [:td
      [:textarea {:type "text"
-                 :rows 5}]]]]
+                 :rows 5
+                 :style {:width "100%"}}]]]]
    )
 
 (defn categories []
