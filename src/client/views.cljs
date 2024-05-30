@@ -138,7 +138,7 @@
   [
    [:tr {:value (:name category) :key (:name category) :class "row"} 
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
-          "Edit3"]]
+          "Endre"]]
     [:td {:bgcolor (:color category)} (:name category)]
     [:td {:align "right"} (gstring/format "%.2f"
                                           (-> category :amount (* 100) Math/round (/ 100)))]
@@ -153,12 +153,13 @@
    ]
   )
 
-(defn edit-category-row [index category builder-category]
+(defn edit-category-row [index category builder-category ready-to-store?]
   [[:tr {:value (:name category) :key (:name category) :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Lukk"]]
     [:td {:bgcolor (:color category)}
-     [:input {:type "text" :placeholder "Navn" :value (:name category)}]
+     [:input {:type "text" :placeholder "Navn" :value (:name builder-category)
+              :on-change #(dispatch [:update-builder-category-name (-> % .-target .-value)])}]
      (color-selector)]
     [:td {:align "right"} (gstring/format "%.2f"
                                           (-> category :amount (* 100) Math/round (/ 100)))]
@@ -170,27 +171,32 @@
           "Edit2"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
           "Del"]]]
-   [:tr
-    [:td]
+   [:tr {:key (str (:name category) "2")}
+    [:td {:style {:vertical-align "top"}}
+     [:button (-> {:class "buttom-class"
+                   :on-click #(dispatch [:store-category2])}
+                  (add-disabled ready-to-store?)) "Lagre"]]
     [:td
      [:textarea {:type "text"
                  :rows 5
                  :value (-> builder-category :marker :value)
+                 :on-change #(dispatch [:mark-transactions (-> % .-target .-value)])
                  :style {:width "100%"}}]]]]
    )
 
 (defn categories []
   (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))
         builder-category @(subscribe [:builder-category])
-        edit-category? (fn [category] (= (:name category) (:name builder-category)))
-        new-category? (= (:name builder-category) "")
+        edit-category? (fn [category] (= (:name category) (:old-name builder-category)))
+        new-category? (= (:old-name builder-category) "")
+        ready-to-store? (category/ready-to-store? builder-category)
         category-rows (map (fn [[index category]]
                              (if (edit-category? category)
-                               (edit-category-row index category builder-category)
+                               (edit-category-row index category builder-category ready-to-store?)
                                (category-row index category))) indexed-categories)
         new-category-rows (if new-category?
-                            (edit-category-row 0 {:name ""} builder-category)
-                            [[:tr
+                            (edit-category-row 0 {:name ""} builder-category ready-to-store?)
+                            [[:tr {:key "newrow"}
                               [:td [:a {:on-click #(dispatch [:edit-category3 "" 0])} "Ny"]]]])
         rows (mapcat identity (concat category-rows [new-category-rows]))]
     (.log js/console rows)
@@ -198,16 +204,7 @@
    [:h3 "Categories"]
    [:table
     [:tbody {:id "categories-tbody"}
-    ;;  (mapcat (fn [[index category]]
-    ;;            (if (edit-category? category)
-    ;;              (edit-category-row index category builder-category)
-    ;;              (category-row index category))) indexed-categories)
-    ;;   (if new-category?
-    ;;     (edit-category-row 0 "newcategory" builder-category)
-    ;;     [:tr
-    ;;      [:td [:a {:on-click #(dispatch [:new-category "newcategory" 0])} "Legg til"]]])
-    rows
-     ]
+     rows]
     ]])
   )
 

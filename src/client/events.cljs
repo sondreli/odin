@@ -138,19 +138,25 @@
          (assoc :displayed-transactions marked-transactions)))
    ))
 
+(defn update-categories [categories builder-category]
+  (let [match-index (some (fn [[index category]] (when (= (:name category) (:name builder-category)) index))
+                          (map-indexed vector categories))]
+    (if (some? match-index)
+      (assoc categories match-index builder-category)
+      (conj categories builder-category))))
+
 (reg-event-fx
  :store-category2
  (fn
    [{db :db} _]
-   (let [builder-category (:builder-category db)
+   (let [builder-category (-> db :builder-category (dissoc :old-name))
          all-transactions (:all-transactions db)
          period-transactions (:period-transactions db)
          accumulator (category/add-category2 all-transactions builder-category)
         ;;  updated-all-transactions (category/add-category all-transactions builder-category)
          updated-all-transactions (:updated-seq accumulator)
          updated-period-transactions (category/add-category period-transactions builder-category)
-         updated-categories (-> (:categories db)
-                                (conj builder-category))
+         updated-categories (update-categories (:categories db) builder-category)
          summed-categories (utils/sum-categoires updated-categories updated-period-transactions)
          updated-db (-> db
                         (assoc :categories updated-categories)
@@ -278,15 +284,21 @@
         ;;  (assoc :categories updated-categories)
          ))))
 
+(defn add-old-name-to-category [category]
+  (assoc category :old-name (:name category)))
+
 (reg-event-db
  :edit-category3
  (fn
    [db [_ category-name index]]
+   (println "edit-category3: " category-name)
    (let [current-builder-category (:builder-category db)
          new-category {:name "" :marker {:value ""}}
          categories (conj (:categories db) new-category)
-         new-builder-category (when (not= category-name (:name current-builder-category))
-                                (some #(when (= category-name (:name %)) %) categories))]
+         new-builder-category (when (not= category-name (:old-name current-builder-category))
+                                (->>  categories
+                                      (some #(when (= category-name (:name %)) %))
+                                      (add-old-name-to-category)))]
      (-> db
          (assoc :builder-category new-builder-category)))))
 
