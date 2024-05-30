@@ -283,8 +283,10 @@
  (fn
    [db [_ category-name index]]
    (let [current-builder-category (:builder-category db)
+         new-category {:name "" :marker {:value ""}}
+         categories (conj (:categories db) new-category)
          new-builder-category (when (not= category-name (:name current-builder-category))
-                                (some #(when (= category-name (:name %)) %) (:categories db)))]
+                                (some #(when (= category-name (:name %)) %) categories))]
      (-> db
          (assoc :builder-category new-builder-category)))))
 

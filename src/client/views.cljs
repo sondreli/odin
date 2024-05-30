@@ -156,7 +156,7 @@
 (defn edit-category-row [index category builder-category]
   [[:tr {:value (:name category) :key (:name category) :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
-          "Save"]]
+          "Lukk"]]
     [:td {:bgcolor (:color category)}
      [:input {:type "text" :placeholder "Navn" :value (:name category)}]
      (color-selector)]
@@ -183,20 +183,30 @@
   (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))
         builder-category @(subscribe [:builder-category])
         edit-category? (fn [category] (= (:name category) (:name builder-category)))
-        new-category? (= (:name builder-category) "newcategory")]
+        new-category? (= (:name builder-category) "")
+        category-rows (map (fn [[index category]]
+                             (if (edit-category? category)
+                               (edit-category-row index category builder-category)
+                               (category-row index category))) indexed-categories)
+        new-category-rows (if new-category?
+                            (edit-category-row 0 {:name ""} builder-category)
+                            [[:tr
+                              [:td [:a {:on-click #(dispatch [:edit-category3 "" 0])} "Ny"]]]])
+        rows (mapcat identity (concat category-rows [new-category-rows]))]
+    (.log js/console rows)
     [:div
    [:h3 "Categories"]
    [:table
     [:tbody {:id "categories-tbody"}
-     (mapcat (fn [[index category]]
-               (if (edit-category? category)
-                 (edit-category-row index category builder-category)
-                 (category-row index category))) indexed-categories)
-     [:tr
-      (if new-category?
-        (edit-category-row 0 "newcategory" builder-category)
-        [:td "Legg til"])
-      ]
+    ;;  (mapcat (fn [[index category]]
+    ;;            (if (edit-category? category)
+    ;;              (edit-category-row index category builder-category)
+    ;;              (category-row index category))) indexed-categories)
+    ;;   (if new-category?
+    ;;     (edit-category-row 0 "newcategory" builder-category)
+    ;;     [:tr
+    ;;      [:td [:a {:on-click #(dispatch [:new-category "newcategory" 0])} "Legg til"]]])
+    rows
      ]
     ]])
   )
