@@ -16,7 +16,7 @@
         ]
     (doall (for [category-update category-updates]
              (let [{add-category-updates true
-                    remove-category-updates false} (group-by #(-> % :category some?)
+                    remove-category-updates false} (group-by #(-> % :category-id some?)
                                                              (:updated-transactions category-update))]
                (db/add-category-to-transactions add-category-updates)
                (db/remove-category-from-transactions remove-category-updates))))

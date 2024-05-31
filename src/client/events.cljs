@@ -58,6 +58,7 @@
    [db [_ response]]           ;; destructure the response from the event vector
    (let [transactions (js->clj response)
          _ (println "process-response transactions: " (count transactions))
+         _ (println "process-response top 10 transactions: " (take 10 transactions))
          transaction-years (date/transaction-years transactions)
          period (:period db)
          updated-period-selector (-> db
@@ -149,10 +150,13 @@
  :store-category2
  (fn
    [{db :db} _]
-   (let [builder-category (-> db :builder-category (dissoc :old-name))
+   (let [builder-category (-> db :builder-category (dissoc :old-name)) ; add uuid if empty string
          all-transactions (:all-transactions db)
          period-transactions (:period-transactions db)
+         _ (println "store-category2 10 period-transactions: " (take 10 period-transactions))
          accumulator (category/add-category2 all-transactions builder-category)
+         _ (println "store-category2 10 accumulator - only-updates: " (take 10 (:only-updates accumulator)))
+         _ (println "store-category2 10 accumulator - updated-seq: " (take 10 (:updated-seq accumulator)))
         ;;  updated-all-transactions (category/add-category all-transactions builder-category)
          updated-all-transactions (:updated-seq accumulator)
          updated-period-transactions (category/add-category period-transactions builder-category)
@@ -204,85 +208,85 @@
          (assoc :builder-category edit-category)
          (assoc :categories updated-categories)))))
 
-(defn add-textarea [tbody index builder-category]
-  (let [row (. tbody insertRow (+ index 1))
-        new-cell (. row insertCell 0)
-        ;; _ (. new-cell setAttribute "colspan" "3")
-        ;; _ (. row addEventListener "click" #(dispatch [:toggle-transaction-row index]))
-        textarea (. js/document createElement "textarea")
-        _ (g/set textarea "type" "text")
-        _ (g/set textarea "rows" 5)
-        _ (g/set textarea "style" "width: 100%")
-        _ (g/set textarea "value" (-> builder-category :marker :value))
-        ]
-    (. new-cell appendChild textarea)))
+;; (defn add-textarea [tbody index builder-category]
+;;   (let [row (. tbody insertRow (+ index 1))
+;;         new-cell (. row insertCell 0)
+;;         ;; _ (. new-cell setAttribute "colspan" "3")
+;;         ;; _ (. row addEventListener "click" #(dispatch [:toggle-transaction-row index]))
+;;         textarea (. js/document createElement "textarea")
+;;         _ (g/set textarea "type" "text")
+;;         _ (g/set textarea "rows" 5)
+;;         _ (g/set textarea "style" "width: 100%")
+;;         _ (g/set textarea "value" (-> builder-category :marker :value))
+;;         ]
+;;     (. new-cell appendChild textarea)))
 
-(defn create-option [text]
-  (let [option (.createElement js/document "option")]
-    (g/set option "value" text)
-    (g/set option "text" text)
-    (g/set option "style" (str "background-color: " text))
-    option))
+;; (defn create-option [text]
+;;   (let [option (.createElement js/document "option")]
+;;     (g/set option "value" text)
+;;     (g/set option "text" text)
+;;     (g/set option "style" (str "background-color: " text))
+;;     option))
 
-(defn create-color-select []
-  (let [color-selector (.createElement js/document "select")
-        colors (map #(-> [% 0.6 0.9]
-                         color/hsv2rgb
-                         color/color-base10->base16
-                         color/color-str) (color/generate-hues 10))
-        options (->> colors
-                     (map create-option)
-                     (map #(.appendChild color-selector %))
-                     doall)]
-    color-selector))
+;; (defn create-color-select []
+;;   (let [color-selector (.createElement js/document "select")
+;;         colors (map #(-> [% 0.6 0.9]
+;;                          color/hsv2rgb
+;;                          color/color-base10->base16
+;;                          color/color-str) (color/generate-hues 10))
+;;         options (->> colors
+;;                      (map create-option)
+;;                      (map #(.appendChild color-selector %))
+;;                      doall)]
+;;     color-selector))
 
-(defn enable-editor [index table-index-offset text builder-category]
-  (let [tbody (. js/document getElementById "categories-tbody")
-        name-input (. js/document createElement "input")
-        _ (g/set name-input "type" "text")
-        _ (g/set name-input "value" text)
-        this-first-td (-> tbody .-rows (.item index) .-cells (.item 0))
-        _ (g/set this-first-td "innerHTML" "")
-        _ (.appendChild this-first-td name-input)
-        _ (.appendChild this-first-td (create-color-select))
+;; (defn enable-editor [index table-index-offset text builder-category]
+;;   (let [tbody (. js/document getElementById "categories-tbody")
+;;         name-input (. js/document createElement "input")
+;;         _ (g/set name-input "type" "text")
+;;         _ (g/set name-input "value" text)
+;;         this-first-td (-> tbody .-rows (.item index) .-cells (.item 0))
+;;         _ (g/set this-first-td "innerHTML" "")
+;;         _ (.appendChild this-first-td name-input)
+;;         _ (.appendChild this-first-td (create-color-select))
 
-        _ (.log js/console tbody)
-        _ (.log js/console this-first-td)]
-    (add-textarea tbody index builder-category)))
+;;         _ (.log js/console tbody)
+;;         _ (.log js/console this-first-td)]
+;;     (add-textarea tbody index builder-category)))
 
-(defn disable-editor [index]
-  (let [tbody (. js/document getElementById "categories-tbody")
-        textarea-row (. tbody deleteRow (+ index 1))
-        _ (.log js/console (-> tbody .-rows (.item index)))
-        category-name (-> tbody .-rows (.item index) (.getAttribute "value"))
-        first-td (-> tbody .-rows (.item index) .-cells (.item 0))
-        _ (.log js/console first-td)
-        _ (.removeChild first-td (.-lastChild first-td))
-        _ (.removeChild first-td (.-lastChild first-td))
-        _ (g/set first-td "innerHTML" category-name)
-        ]))
+;; (defn disable-editor [index]
+;;   (let [tbody (. js/document getElementById "categories-tbody")
+;;         textarea-row (. tbody deleteRow (+ index 1))
+;;         _ (.log js/console (-> tbody .-rows (.item index)))
+;;         category-name (-> tbody .-rows (.item index) (.getAttribute "value"))
+;;         first-td (-> tbody .-rows (.item index) .-cells (.item 0))
+;;         _ (.log js/console first-td)
+;;         _ (.removeChild first-td (.-lastChild first-td))
+;;         _ (.removeChild first-td (.-lastChild first-td))
+;;         _ (g/set first-td "innerHTML" category-name)
+;;         ]))
 
 
-(reg-event-db
- :edit-category2
- (fn
-   [db [_ category-name index]]
-   (println "edit-category2 " category-name index)
-   (let [row-index-currently-open (:open-category-row db)
-         builder-category (some #(when (= category-name (:name %)) %) (:categories db))
-         updated-categories (filter #(not= (:name %) category-name) (:categories db))
-         row-index-to-open (when (or (not= index row-index-currently-open)
-                                  (nil? row-index-currently-open))
-                          index)]
-     (when (some? row-index-currently-open)
-       (disable-editor row-index-currently-open))
-     (when (some? row-index-to-open)
-       (enable-editor row-index-to-open 0 category-name builder-category))
-     (-> db
-         (assoc :open-category-row row-index-to-open)
-        ;;  (assoc :builder-category edit-category)
-        ;;  (assoc :categories updated-categories)
-         ))))
+;; (reg-event-db
+;;  :edit-category2
+;;  (fn
+;;    [db [_ category-name index]]
+;;    (println "edit-category2 " category-name index)
+;;    (let [row-index-currently-open (:open-category-row db)
+;;          builder-category (some #(when (= category-name (:name %)) %) (:categories db))
+;;          updated-categories (filter #(not= (:name %) category-name) (:categories db))
+;;          row-index-to-open (when (or (not= index row-index-currently-open)
+;;                                   (nil? row-index-currently-open))
+;;                           index)]
+;;      (when (some? row-index-currently-open)
+;;        (disable-editor row-index-currently-open))
+;;      (when (some? row-index-to-open)
+;;        (enable-editor row-index-to-open 0 category-name builder-category))
+;;      (-> db
+;;          (assoc :open-category-row row-index-to-open)
+;;         ;;  (assoc :builder-category edit-category)
+;;         ;;  (assoc :categories updated-categories)
+;;          ))))
 
 (defn add-old-name-to-category [category]
   (assoc category :old-name (:name category)))
@@ -290,15 +294,16 @@
 (reg-event-db
  :edit-category3
  (fn
-   [db [_ category-name index]]
-   (println "edit-category3: " category-name)
+   [db [_ category-id index]]
+   (println "edit-category3: " category-id)
    (let [current-builder-category (:builder-category db)
-         new-category {:name "" :marker {:value ""}}
+         new-category {:id "" :name "" :marker {:value ""}}
          categories (conj (:categories db) new-category)
-         new-builder-category (when (not= category-name (:old-name current-builder-category))
+         new-builder-category (when (not= category-id (:id current-builder-category))
                                 (->>  categories
-                                      (some #(when (= category-name (:name %)) %))
-                                      (add-old-name-to-category)))]
+                                      (some #(when (= category-id (:id %)) %))
+                                      ;; (add-old-name-to-category)
+                                      ))]
      (-> db
          (assoc :builder-category new-builder-category)))))
 

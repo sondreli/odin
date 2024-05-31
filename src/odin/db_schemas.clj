@@ -15,17 +15,23 @@
                           :db/cardinality :db.cardinality/one
                           :db/doc "When the transaction happened in unixtime"}
 
-                         {:db/ident :transaction/category
-                          :db/valueType :db.type/string
+                         {:db/ident :transaction/category-id
+                          :db/valueType :db.type/ref
                           :db/cardinality :db.cardinality/one
-                          :db/doc "The category this transaction is assigned to"}
+                          :db/doc "The id of the category this transaction is assigned to"}
 
                          {:db/ident :transaction/source
                           :db/valueType :db.type/string
                           :db/cardinality :db.cardinality/one
                           :db/doc "The source data for the transaction retrieved from the bank"}])
 
-(def category-schema [{:db/ident :category/name
+(def category-schema [{:db/ident :category/id
+                       :db/valueType :db.type/uuid
+                       :db/unique :db.unique/identity
+                       :db/cardinality :db.cardinality/one
+                       :db/doc "Unique identifyer for the category that allows all other attributes to be modified"}
+                       
+                      {:db/ident :category/name
                        :db/valueType :db.type/string
                        :db/unique :db.unique/identity
                        :db/cardinality :db.cardinality/one

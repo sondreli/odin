@@ -252,12 +252,12 @@
 
 (defn add-data-to-replacement [transactions-in-db partial-transaction] 
   (let [have-same-db-id? (fn [t] (-> t :db-id (= (:db-id partial-transaction))))
-        category (some #(when (have-same-db-id? %) (:category %)) transactions-in-db)]
+        category-id (some #(when (have-same-db-id? %) (:category-id %)) transactions-in-db)]
     (-> partial-transaction
         (assoc :amount (-> partial-transaction :source :amount))
         (assoc :description (-> partial-transaction :source :description))
         (assoc :date (-> partial-transaction :source :date))
-        (db/assoc-attribute [:category category]))))
+        (db/assoc-attribute [:category-id category-id]))))
 
 (defn add-data-to-new [[idx new-transaction]]
   (let [trans {:temp-id (str idx)
@@ -265,7 +265,7 @@
                :date (:date new-transaction)
                :description (:description new-transaction)
                :source new-transaction
-               :category nil}]
+               :category-id nil}]
     (reduce db/assoc-attribute {} trans)))
 
 (defn process-transactions-from-bank [transactions-in-db transactions-from-bank]
@@ -291,7 +291,7 @@
 
 (process-transactions-from-bank
  [{:amount 2.0 :date 1703631600000 :db-id 1 :description "cat"}
-  {:amount 3.0 :date 1703631600000 :db-id 2 :description "asdg" :category {:color "#aff"}}
+  {:amount 3.0 :date 1703631600000 :db-id 2 :description "asdg" :category-id "1234"}
   {:amount 3.0 :date 1703631600000 :db-id 3 :description "asdf"}
   ]
  [{:amount 2.0 :date 1703631600000 :description "cat"}

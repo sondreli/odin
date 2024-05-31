@@ -3,6 +3,7 @@
             [clojure.string :as s]
             [client.services.date-service :as date]
             [re-frame.core :refer [dispatch]]
+            [goog.object :as g]
             [goog.string :as gstring]))
 
 (defn sum-category [[category-name transactions]]
@@ -139,11 +140,11 @@
         (.rangeRound [(- height marginBottom) marginTop]))))
 
 (defn make-colors [series color-map]
-  (let [range (.map series (fn [d] (get color-map (goog.object/get d "key"))))
+  (let [range (.map series (fn [d] (get color-map (g/get d "key"))))
         ]
     (-> d3
       .scaleOrdinal
-      (.domain (.map series (fn [d] (goog.object/get d "key"))))
+      (.domain (.map series (fn [d] (g/get d "key"))))
       ;; (.range (get d3/schemeSpectral (count series)))
       (.range range)
       (.unknown "#ccc"))))
@@ -185,17 +186,17 @@
                 (.selectAll)
                 (.data series)
                 (.join "g")
-                (.attr "fill" (fn [d] (color (goog.object/get d "key"))))
+                (.attr "fill" (fn [d] (color (g/get d "key"))))
                 (.selectAll "rect")
-                (.data (fn [D] (.map D (fn [d] (goog.object/set d "key" (goog.object/get D "key")) d))))
+                (.data (fn [D] (.map D (fn [d] (g/set d "key" (g/get D "key")) d))))
                 (.join "rect")
-                (.attr "x" (fn [d] (x (first (goog.object/get d "data")))))
+                (.attr "x" (fn [d] (x (first (g/get d "data")))))
                 (.attr "y" (fn [d] (-> d second y)))
                 (.attr "width" (.bandwidth x))
                 (.attr "height" (fn [d] (- (-> d first y) (-> d second y))))
                 (.on "mouseover" (fn [event d]
-                                   (let [key (goog.object/get d "key")
-                                         tooltip-text (str key " - " (-> d (goog.object/get "data") (get 1) (.get key) :amount))]
+                                   (let [key (g/get d "key")
+                                         tooltip-text (str key " - " (-> d (g/get "data") (get 1) (.get key) :amount))]
                                      (this-as this (-> d3 (.select this)
                                                        (.transition)
                                                        (.duration "50")
@@ -209,8 +210,8 @@
                                                             (.duration "50")
                                                             (.attr "opacity" "1")))
                                   (show-tooltip-label "div.tooltip-barchart" "0")))
-                (.on "click" (fn [event d] (let [category (-> d (goog.object/get "key"))
-                                                 month (-> d (goog.object/get "data") first)
+                (.on "click" (fn [event d] (let [category (-> d (g/get "key"))
+                                                 month (-> d (g/get "data") first)
                                                  period (date/month-label->period month)]
                                              (show-tooltip-label "div.tooltip-barchart" "0")
                                              (dispatch [:navigate [period :table [category]]]))))

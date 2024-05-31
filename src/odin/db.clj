@@ -104,11 +104,12 @@
               :transaction/description (:description transaction)
               :transaction/date (:date transaction)
               :transaction/source (-> transaction :source pr-edn-str)
-              :transaction/category (-> transaction :category pr-edn-str)}]
+              :transaction/category-id (:category-id transaction)}]
     (reduce assoc-attribute {} data)))
 
 (defn category->db-entry [category]
-  (let [data {:db/id (:name category)
+  (let [data {:db/id (:id category)
+              :category/id (:id category)
               :category/name (:name category)
               :category/color (:color category)
               :category/color-value (:color-value category)
@@ -153,8 +154,8 @@
               :transaction/description (:description transaction)
               :transaction/source (-> transaction :source pr-edn-str)}]
     ;; data
-    (if (contains? transaction :category)
-      (assoc data :transaction/category (-> transaction :category pr-edn-str))
+    (if (contains? transaction :category-id)
+      (assoc data :transaction/category-id (:category-id transaction))
       data)
     ))
 
@@ -188,22 +189,22 @@
 
 (defn get-transactions []
   (println "get-transactions")
-  (let [db-result (->> (d/q '[:find ?e ?date ?amount ?description ?source ?category
+  (let [db-result (->> (d/q '[:find ?e ?date ?amount ?description ?source ?category-id
                               :where [?e :transaction/amount ?amount]
                               [?e :transaction/description ?description]
                               [?e :transaction/date ?date]
                               [?e :transaction/source ?source]
-                              [(get-else $ ?e :transaction/category false) ?category]]
+                              [(get-else $ ?e :transaction/category-id false) ?category-id]]
                             (d/db conn))
                        (sort-by second))
-        to-transaction-map (fn [[eid date amount desc source category]]
+        to-transaction-map (fn [[eid date amount desc source category-id]]
                              (-> {:db-id eid
                                   :amount (Double/parseDouble amount)
                                   :description desc
                                   :date date
                                   :source (edn/read-string source)}
                                 ;;  (add-update-if-some :category edn/read-string category)
-                                 (add-if-some :category (edn/read-string category))))]
+                                 (add-if-some :category-id category-id)))]
     (println "get-transactions-from-db: " (count db-result))
     (->> db-result (map to-transaction-map) (sort-by :date))))
 
@@ -218,8 +219,8 @@
 
 (defn add-category [transaction]
   (let [eid (:db-id transaction)
-        category (-> transaction :category pr-edn-str)]
-    {:db/id eid :transaction/category category}))
+        category-id (:category-id transaction)]
+    {:db/id eid :transaction/category-id category-id}))
 
 (defn add-category-to-transactions [transactions]
   (println "add-category-to-transactions" (count transactions))
@@ -231,21 +232,24 @@
   (println "remove-category-from-transactions" (count transaction-updates))
   (let [data (map #(vector :db/retract
                            (:db-id %)
-                           :transaction/category (-> % :old-category pr-edn-str)) transaction-updates)]
+                           :transaction/category-id (-> % :old-category-id pr-edn-str)) transaction-updates)]
     (println data)
     (d/transact conn {:tx-data data})))
 
 (defn get-categories []
   (println "get-categories")
-  (let [db-result (->> (d/q '[:find ?e ?name ?color ?color-value ?marker
-                              :where [?e :category/name ?name]
+  (let [db-result (->> (d/q '[:find ?e ?id ?name ?color ?color-value ?marker
+                              :where
+                              [?e :category/id ?id]
+                              [?e :category/name ?name]
                               [?e :category/color ?color]
                               [?e :category/color-value ?color-value]
                               [?e :category/marker ?marker]]
                             (d/db conn))
                        (sort-by first))
-        to-transaction-map (fn [[eid name color color-value marker]]
+        to-transaction-map (fn [[eid id name color color-value marker]]
                              (-> {:db-id eid
+                                  :id id
                                   :name name
                                   :color color
                                   :color-value color-value

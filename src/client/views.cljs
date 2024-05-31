@@ -131,9 +131,6 @@
 (defn get-value-of-parent-row [elm]
   (-> elm  .-target (. closest ".row") .-attributes .-value .-value))
 
-(defn category-editor [category]
-  [:td {:bgcolor (:color category)} [:input {:type "text" :placeholder "Navn"
-                                             :value (:name category)}]])
 (defn category-row [index category]
   [
    [:tr {:value (:name category) :key (:name category) :class "row"} 
@@ -146,8 +143,6 @@
           "View"]]
     [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
           "Edit"]]
-    [:td [:a {:on-click #(dispatch [:edit-category2 (get-value-of-parent-row %) index])}
-          "Edit2"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
           "Del"]]]
    ]
@@ -167,8 +162,6 @@
           "View"]]
     [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
           "Edit"]]
-    [:td [:a {:on-click #(dispatch [:edit-category2 (get-value-of-parent-row %) index])}
-          "Edit2"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
           "Del"]]]
    [:tr {:key (str (:name category) "2")}
@@ -214,23 +207,29 @@
      [:h2 "Loading status:"]
      [:h2 loading]]))
 
-(defn add-color [props transaction]
+(defn add-color [props transaction category-map]
   (if (and
-       (contains? transaction :category)
+       (contains? transaction :category-id)
        (contains? (:category transaction) :color))
     (if (contains? (:category transaction) :conflicting-color)
       (assoc props :bgcolor "#f44")
       (assoc props :bgcolor (-> transaction :category :color)))
     props))
 
-(defn transactions-table [transactions]
+(defn add-color2 [props transaction category-map]
+  (if (contains? transaction :category-id)
+    (assoc props :bgcolor (->> transaction :category-id (get category-map) :color))
+    props))
+
+(defn transactions-table [transactions categories]
   (let [;transactions @(subscribe [:displayed-transactions])
-        indexed-transactions (map-indexed vector transactions)]
+        indexed-transactions (map-indexed vector transactions)
+        category-map (into {} (map (juxt :id #(%)) categories))]
     [:table
      [:tbody {:id "transactions-tbody"}
       (for [[index transaction] indexed-transactions]
        [:tr (-> {:key index}
-                (add-color transaction))
+                (add-color2 transaction category-map))
         [:td {:on-click #(dispatch [:toggle-transaction-row index])} "Insp"]
         [:td {:align "right" :style {:padding-right "1em"}}
          (->> transaction :amount (gstring/format "%.2f"))]
@@ -258,7 +257,7 @@
         _ (println (str "display-option: " display-option))
         displayed-transactions (:displayed-transactions displayed-transactions-data)]
     (case display-option
-      :table (transactions-table displayed-transactions)
+      :table (transactions-table displayed-transactions categories)
       :bar-chart (chart/draw-stacked-barchart displayed-transactions categories period))
     ))
 

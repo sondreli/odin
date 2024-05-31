@@ -47,23 +47,21 @@
        (into [])))
   )
 
-(defn remove-category-if-same [category-name transaction]
-  (if (= category-name (-> transaction :category :name))
-    (dissoc transaction :category)
+(defn remove-category-if-same [category transaction]
+  (if (= (:id category) (:category-id transaction))
+    (dissoc transaction :category-id)
     transaction))
 
 (defn update-match [builder-category transaction]
-  (let [category (select-keys builder-category [:name :color])]
-    (assoc transaction :category category)))
+  (assoc transaction :category-id (:id builder-category)))
 
 (defn have-category? [builder-category transaction]
-  (= (:name builder-category)
-     (-> transaction :category :name)))
+  (= (:id builder-category)
+     (-> transaction :category-id)))
 
 (defn add-category [transactions builder-category]
-  (let [category (select-keys builder-category [:name :color])
-        update-match-fun (fn [tran] (assoc tran :category category))
-        update-nomatch-fun (partial remove-category-if-same (:name builder-category))]
+  (let [update-match-fun (fn [tran] (assoc tran :category-id (:id builder-category)))
+        update-nomatch-fun (partial remove-category-if-same builder-category)]
     (->> transactions
          (map #(update-if-match % builder-category update-match-fun update-nomatch-fun))
          (into []))))
@@ -73,13 +71,13 @@
         (let [updated-transaction (update-match builder-category transaction)]
           (-> acc
               (update-in [:updated-seq] conj updated-transaction)
-              (update-in [:only-updates] conj (select-keys updated-transaction [:db-id :category]))))
+              (update-in [:only-updates] conj (select-keys updated-transaction [:db-id :category-id]))))
         (have-category? builder-category transaction)
         (-> acc
-            (update-in [:updated-seq] conj (dissoc transaction :category))
+            (update-in [:updated-seq] conj (dissoc transaction :category-id))
             (update-in [:only-updates] conj {:db-id (:db-id transaction)
-                                             :category nil
-                                             :old-category (:category transaction)}))
+                                             :category-id nil
+                                             :old-category-id (:category-id transaction)}))
         :else
         (update-in acc [:updated-seq] conj transaction)))
 

@@ -62,7 +62,7 @@
      [_ transaction] :event} _]
    (let [filter-path (if (-> db :filter-path count (= 2))
                        [(-> db :filter-path first)]
-                       (let [category (some #(when (= (-> transaction :category :name) (:name %)) %)
+                       (let [category (some #(when (= (:category-id transaction) (:id %)) %)
                                             (:categories db))
                              matcher (find-matcher transaction category)]
                          [(:name category) matcher]))]

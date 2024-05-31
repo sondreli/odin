@@ -15,10 +15,10 @@
 ;; now we create an interceptor using `after`
 (def check-spec-interceptor (after (partial check-and-throw :client.db/db)))
 
-(defn apply-filter-path [filter-path transactions]
+(defn apply-filter-path [filter-path category-map transactions]
   (case (count filter-path)
     0 transactions
-    1 (into [] (filter #(-> % :category :name (= (first filter-path))) transactions))
+    1 (into [] (filter #(->> % :category-id (get category-map) (= (first filter-path))) transactions))
     2 (let [match-category {:marker {:description [(second filter-path)]}}]
         (->> transactions
              (filter #(category/match? match-category %))
@@ -56,17 +56,19 @@
                       (-> db :filter-path))
         builder-category (if (some? new-builder-category)
                            new-builder-category
-                           (-> db :builder-category))]
+                           (-> db :builder-category))
+        category-map (into {} (map (juxt :id #(%)) (:categories db)))]
     
     {:displayed-transactions (->> period-transactions
-                                  (apply-filter-path filter-path)
+                                  (apply-filter-path filter-path category-map)
                                   (category/mark-transactions builder-category))
      :display-option :table}))
 
 (defn apply-category [db filter-path]
   (let [;filter-path (if (some? category)[category] [])
+        category-map (into {} (map (juxt :id #(%)) (:categories db)))
         displayed-transactions (->> (db :period-transactions)
-                                    (apply-filter-path filter-path)
+                                    (apply-filter-path filter-path category-map)
                                     (category/mark-transactions (db :builder-category)))]
     (-> db
         (assoc :filter-path filter-path)
