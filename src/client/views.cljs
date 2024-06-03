@@ -181,7 +181,7 @@
   (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))
         builder-category @(subscribe [:builder-category])
         edit-category? (fn [category] (= (:id category) (:id builder-category)))
-        new-category? (= (:id builder-category) "")
+        new-category? (-> builder-category :id nil?)
         ready-to-store? (category/ready-to-store? builder-category)
         category-rows (map (fn [[index category]]
                              (if (edit-category? category)
@@ -224,7 +224,7 @@
 (defn transactions-table [transactions categories]
   (let [;transactions @(subscribe [:displayed-transactions])
         indexed-transactions (map-indexed vector transactions)
-        category-map (into {} (map (juxt :id #(%)) categories))]
+        category-map (into {} (map (juxt :id #(identity %)) categories))]
     [:table
      [:tbody {:id "transactions-tbody"}
       (for [[index transaction] indexed-transactions]

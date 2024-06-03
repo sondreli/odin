@@ -150,7 +150,12 @@
  :store-category2
  (fn
    [{db :db} _]
-   (let [builder-category (-> db :builder-category (assoc :id (str (random-uuid))))
+   ; how to distinguis between edits and new category?
+   ; update if categoryId is provided
+   ; create new if no categoryId
+   (let [builder-category (if (-> db :builder-category :id some?)
+                            (:builder-category db)
+                            (-> db :builder-category (assoc :id (str (random-uuid)))))
          all-transactions (:all-transactions db)
          period-transactions (:period-transactions db)
          _ (println "store-category2 10 period-transactions: " (take 10 period-transactions))
@@ -297,7 +302,7 @@
    [db [_ category-id index]]
    (println "edit-category3: " category-id)
    (let [current-builder-category (:builder-category db)
-         new-category {:id "" :name "" :marker {:value ""}}
+         new-category {:name "" :marker {:value ""}}
          categories (conj (:categories db) new-category)
          new-builder-category (when (not= category-id (:id current-builder-category))
                                 (->>  categories

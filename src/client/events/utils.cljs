@@ -57,7 +57,7 @@
         builder-category (if (some? new-builder-category)
                            new-builder-category
                            (-> db :builder-category))
-        category-map (into {} (map (juxt :id #(%)) (:categories db)))]
+        category-map (into {} (map (juxt :id #(identity %)) (:categories db)))]
     
     {:displayed-transactions (->> period-transactions
                                   (apply-filter-path filter-path category-map)
@@ -66,7 +66,7 @@
 
 (defn apply-category [db filter-path]
   (let [;filter-path (if (some? category)[category] [])
-        category-map (into {} (map (juxt :id #(%)) (:categories db)))
+        category-map (into {} (map (juxt :id #(identity %)) (:categories db)))
         displayed-transactions (->> (db :period-transactions)
                                     (apply-filter-path filter-path category-map)
                                     (category/mark-transactions (db :builder-category)))]

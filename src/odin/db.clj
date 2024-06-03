@@ -108,7 +108,7 @@
     (reduce assoc-attribute {} data)))
 
 (defn category->db-entry [category]
-  (let [data {:db/id (:id category)
+  (let [data {:db/id (:temp-id category)
               :category/id (-> category :id parse-uuid)
               :category/name (:name category)
               :category/color (:color category)
@@ -220,7 +220,7 @@
 (defn add-category [transaction]
   (let [eid (:db-id transaction)
         category-id (:category-id transaction)]
-    {:db/id eid :transaction/category-id category-id}))
+    {:db/id eid :transaction/category-id [:category/id category-id]}))
 
 (defn add-category-to-transactions [transactions]
   (println "add-category-to-transactions" (count transactions))
