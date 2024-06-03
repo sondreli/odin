@@ -109,7 +109,7 @@
 
 (defn category->db-entry [category]
   (let [data {:db/id (:id category)
-              :category/id (:id category)
+              :category/id (-> category :id parse-uuid)
               :category/name (:name category)
               :category/color (:color category)
               :category/color-value (:color-value category)

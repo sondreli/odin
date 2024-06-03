@@ -34,13 +34,13 @@
   (let [category-map (into {} (map (juxt :name #(assoc % :amount 0)) categories))
         summed-category-map (set/rename-keys (reduce add-amount-to-category-map category-map transactions)
                                              {nil "ukategorisert"})
-        summed-categories (->> (conj categories {:name "ukategorisert"})
+        summed-categories (->> (conj categories {:id "ukategorisert" :name "ukategorisert"})
                                (map #(assoc % :amount (-> summed-category-map (get (:name %)) :amount)))
                                (sort-by :amount))
         total-out (->> summed-categories (map :amount) (filter neg?) (apply +))
         total-in (->> summed-categories (map :amount) (filter pos?) (apply +))
-        accounting (concat summed-categories [{:name "out" :amount total-out}
-                                              {:name "in" :amount total-in}])]
+        accounting (concat summed-categories [{:id "out" :name "out" :amount total-out}
+                                              {:id "in" :name "in" :amount total-in}])]
     accounting))
 
 (defn displayed-transactions-data [db

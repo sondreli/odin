@@ -133,7 +133,7 @@
 
 (defn category-row [index category]
   [
-   [:tr {:value (:name category) :key (:name category) :class "row"} 
+   [:tr {:value (:id category) :key (:name category) :class "row"} 
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Endre"]]
     [:td {:bgcolor (:color category)} (:name category)]
@@ -149,7 +149,7 @@
   )
 
 (defn edit-category-row [index category builder-category ready-to-store?]
-  [[:tr {:value (:name category) :key (:name category) :class "row"}
+  [[:tr {:value (:id category) :key (:id category) :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Lukk"]]
     [:td {:bgcolor (:color category)}
@@ -164,7 +164,7 @@
           "Edit"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
           "Del"]]]
-   [:tr {:key (str (:name category) "2")}
+   [:tr {:key (str (:id category) "2")}
     [:td {:style {:vertical-align "top"}}
      [:button (-> {:class "buttom-class"
                    :on-click #(dispatch [:store-category2])}
@@ -180,15 +180,15 @@
 (defn categories []
   (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))
         builder-category @(subscribe [:builder-category])
-        edit-category? (fn [category] (= (:name category) (:old-name builder-category)))
-        new-category? (= (:old-name builder-category) "")
+        edit-category? (fn [category] (= (:id category) (:id builder-category)))
+        new-category? (= (:id builder-category) "")
         ready-to-store? (category/ready-to-store? builder-category)
         category-rows (map (fn [[index category]]
                              (if (edit-category? category)
                                (edit-category-row index category builder-category ready-to-store?)
                                (category-row index category))) indexed-categories)
         new-category-rows (if new-category?
-                            (edit-category-row 0 {:name ""} builder-category ready-to-store?)
+                            (edit-category-row 0 {:id ""} builder-category ready-to-store?)
                             [[:tr {:key "newrow"}
                               [:td [:a {:on-click #(dispatch [:edit-category3 "" 0])} "Ny"]]]])
         rows (mapcat identity (concat category-rows [new-category-rows]))]
@@ -256,6 +256,7 @@
         _ (println "displayed-transactions-viewer: " display-option)
         _ (println (str "display-option: " display-option))
         displayed-transactions (:displayed-transactions displayed-transactions-data)]
+    (println "displayed-transactions-viewer 10 transactions: " (take 10 displayed-transactions))
     (case display-option
       :table (transactions-table displayed-transactions categories)
       :bar-chart (chart/draw-stacked-barchart displayed-transactions categories period))

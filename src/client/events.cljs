@@ -150,7 +150,7 @@
  :store-category2
  (fn
    [{db :db} _]
-   (let [builder-category (-> db :builder-category (dissoc :old-name)) ; add uuid if empty string
+   (let [builder-category (-> db :builder-category (assoc :id (str (random-uuid))))
          all-transactions (:all-transactions db)
          period-transactions (:period-transactions db)
          _ (println "store-category2 10 period-transactions: " (take 10 period-transactions))
