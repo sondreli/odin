@@ -25,15 +25,15 @@
                           :db/cardinality :db.cardinality/one
                           :db/doc "The source data for the transaction retrieved from the bank"}])
 
-(def category-schema [{:db/ident :category/id
-                       :db/valueType :db.type/uuid
-                       :db/unique :db.unique/identity
-                       :db/cardinality :db.cardinality/one
-                       :db/doc "Unique identifyer for the category that allows all other attributes to be modified"}
+(def category-schema [
+                    ;;   {:db/ident :category/id
+                    ;;    :db/valueType :db.type/uuid
+                    ;;    :db/unique :db.unique/identity
+                    ;;    :db/cardinality :db.cardinality/one
+                    ;;    :db/doc "Unique identifyer for the category that allows all other attributes to be modified"}
                        
                       {:db/ident :category/name
                        :db/valueType :db.type/string
-                       :db/unique :db.unique/identity
                        :db/cardinality :db.cardinality/one
                        :db/doc "Name of the category"}
 

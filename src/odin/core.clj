@@ -46,7 +46,8 @@
   (cpj/GET "/transactions/:id/details" [id] (partial transaction/transaction_details_handler id))
   (cpj/GET "/transactions" params transaction/transaction_handler)
   (cpj/GET "/categories" params category/categories-handler)
-  (cpj/POST "/categories" params category/store-categories-handler)
+  (cpj/POST "/category" params category/store-category-handler)
+  (cpj/POST "/transactions/update" params category/update-transactions-with-categories)
   )
 
 (def app-handler

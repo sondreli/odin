@@ -108,8 +108,7 @@
     (reduce assoc-attribute {} data)))
 
 (defn category->db-entry [category]
-  (let [data {:db/id (:temp-id category)
-              :category/id (-> category :id parse-uuid)
+  (let [data {:db/id (:id category)
               :category/name (:name category)
               :category/color (:color category)
               :category/color-value (:color-value category)
@@ -140,7 +139,8 @@
   (let [data (map transaction->db-entry2 transactions)
         tx-response (d/transact conn {:tx-data data})
         temp-ids (:tempids tx-response)
-        stored-transactions (map #(add-db-id temp-ids %) transactions)]
+        stored-transactions (map #(add-db-id temp-ids %) transactions)
+        ]
     stored-transactions))
 
 ;; (store-transactions2
@@ -212,10 +212,25 @@
 ;;        :where [?e :transaction/description ?description]
 ;;        [?e :transaction/category ?category]] (d/db conn))
 
-(defn store-categories [categories]
-  (let [data (->> categories
-                  (map category->db-entry))]
-    (d/transact conn {:tx-data data})))
+(defn add-id [temp-ids category]
+  (let [db-id (->> category :id (get temp-ids))]
+    (assoc category :id db-id)))
+
+(defn set-temp-id [category]
+  (if (-> category :id nil?)
+    (assoc category :id (:name category))
+    category))
+
+; not working, fix new/edit updates
+(defn store-categories [category]
+  (let [data (-> category
+                 (set-temp-id)
+                 (category->db-entry)) 
+        tx-response (d/transact conn {:tx-data data})
+        temp-ids (:tempids tx-response)
+        stored-category (add-id temp-ids category)
+        ]
+    stored-category))
 
 (defn add-category [transaction]
   (let [eid (:db-id transaction)
@@ -238,18 +253,16 @@
 
 (defn get-categories []
   (println "get-categories")
-  (let [db-result (->> (d/q '[:find ?e ?id ?name ?color ?color-value ?marker
+  (let [db-result (->> (d/q '[:find ?e ?name ?color ?color-value ?marker
                               :where
-                              [?e :category/id ?id]
                               [?e :category/name ?name]
                               [?e :category/color ?color]
                               [?e :category/color-value ?color-value]
                               [?e :category/marker ?marker]]
                             (d/db conn))
                        (sort-by first))
-        to-transaction-map (fn [[eid id name color color-value marker]]
-                             (-> {:db-id eid
-                                  :id id
+        to-transaction-map (fn [[eid name color color-value marker]]
+                             (-> {:id eid
                                   :name name
                                   :color color
                                   :color-value color-value

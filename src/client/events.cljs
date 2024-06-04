@@ -153,9 +153,16 @@
    ; how to distinguis between edits and new category?
    ; update if categoryId is provided
    ; create new if no categoryId
-   (let [builder-category (if (-> db :builder-category :id some?)
-                            (:builder-category db)
-                            (-> db :builder-category (assoc :id (str (random-uuid)))))
+   ; new category flow
+   ; call POST /category with builder-category
+   ; then update all transactions with new category-id
+   ; then call update transctions endpoint
+   ; category edit
+   ; only update transactions if marker changed?
+   (let [builder-category (if (-> db :builder-category :id (= "new-id"))
+                            (-> db :builder-category (dissoc :id))
+                            (:builder-category db))
+
          all-transactions (:all-transactions db)
          period-transactions (:period-transactions db)
          _ (println "store-category2 10 period-transactions: " (take 10 period-transactions))
@@ -184,6 +191,30 @@
                    :on-failure      [:category-stored-in-db-failure]}
       :db  updated-db})
    ))
+
+(reg-event-fx
+ :store-category3
+ (fn
+   [{db :db} _]
+   (let [builder-category (if (-> db :builder-category :id (= "new-id"))
+                            (-> db :builder-category (dissoc :id))
+                            (:builder-category db))]
+     {:http-xhrio {:method          :post
+                   :uri             "http://localhost/category"
+                   :params          (clj->js builder-category)
+                   :format          (ajax/json-request-format)
+                   :response-format (ajax/json-response-format {:keywords? true})
+                   :on-success      [:stored-category-response]
+                   :on-failure      [:category-stored-in-db-failure]}
+      :db  updated-db})))
+
+(reg-event-db
+ :stored-category-response
+ (fn
+   [db [_ response]]
+   (let [category (js->clj response)])
+   (println "store-categories-success")
+   db))
 
 (reg-event-db
  :delete-category
@@ -302,7 +333,7 @@
    [db [_ category-id index]]
    (println "edit-category3: " category-id)
    (let [current-builder-category (:builder-category db)
-         new-category {:name "" :marker {:value ""}}
+         new-category {:id "new-id" :name "" :marker {:value ""}}
          categories (conj (:categories db) new-category)
          new-builder-category (when (not= category-id (:id current-builder-category))
                                 (->>  categories

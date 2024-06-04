@@ -181,16 +181,17 @@
   (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))
         builder-category @(subscribe [:builder-category])
         edit-category? (fn [category] (= (:id category) (:id builder-category)))
-        new-category? (-> builder-category :id nil?)
+        _ (println "categories builder-category: " builder-category)
+        new-category? (-> builder-category :id (= "new-id"))
         ready-to-store? (category/ready-to-store? builder-category)
         category-rows (map (fn [[index category]]
                              (if (edit-category? category)
                                (edit-category-row index category builder-category ready-to-store?)
                                (category-row index category))) indexed-categories)
         new-category-rows (if new-category?
-                            (edit-category-row 0 {:id ""} builder-category ready-to-store?)
+                            (edit-category-row 0 {:id "new-id"} builder-category ready-to-store?)
                             [[:tr {:key "newrow"}
-                              [:td [:a {:on-click #(dispatch [:edit-category3 "" 0])} "Ny"]]]])
+                              [:td [:a {:on-click #(dispatch [:edit-category3 "new-id" 0])} "Ny"]]]])
         rows (mapcat identity (concat category-rows [new-category-rows]))]
     (.log js/console rows)
     [:div
