@@ -206,15 +206,33 @@
                    :response-format (ajax/json-response-format {:keywords? true})
                    :on-success      [:stored-category-response]
                    :on-failure      [:category-stored-in-db-failure]}
-      :db  updated-db})))
+      :db db})))
 
 (reg-event-db
  :stored-category-response
  (fn
    [db [_ response]]
-   (let [category (js->clj response)])
-   (println "store-categories-success")
-   db))
+   (let [stored-category (js->clj response)
+         all-transactions (:all-transactions db)
+         period-transactions (:period-transactions db)
+         _ (println "stored-category-response stored-category: " stored-category)
+         accumulator (category/add-category2 all-transactions stored-category)
+         _ (println "stored-category-response 10 accumulator - only-updates: " (take 10 (:only-updates accumulator)))
+         _ (println "stored-category-response 10 accumulator - updated-seq: " (take 10 (:updated-seq accumulator)))
+        ;;  updated-all-transactions (category/add-category all-transactions builder-category)
+         updated-all-transactions (:updated-seq accumulator)
+         updated-period-transactions (category/add-category period-transactions stored-category)
+         updated-categories (update-categories (:categories db) stored-category)
+         summed-categories (utils/sum-categoires updated-categories updated-period-transactions)
+         updated-db (-> db
+                        (assoc :categories updated-categories)
+                        (assoc :summed-categories summed-categories)
+                        (assoc :builder-category nil)
+                        (assoc :all-transactions updated-all-transactions)
+                        (assoc :period-transactions updated-period-transactions)
+                        (assoc :displayed-transactions updated-period-transactions))]
+     (println "store-categories-success")
+     updated-db)))
 
 (reg-event-db
  :delete-category
@@ -335,6 +353,8 @@
    (let [current-builder-category (:builder-category db)
          new-category {:id "new-id" :name "" :marker {:value ""}}
          categories (conj (:categories db) new-category)
+         _ (println "found category: " (map #(-> % :id type) categories))
+         _ (println "edit-category3 category-id: " (type category-id))
          new-builder-category (when (not= category-id (:id current-builder-category))
                                 (->>  categories
                                       (some #(when (= category-id (:id %)) %))

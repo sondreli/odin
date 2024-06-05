@@ -167,7 +167,7 @@
    [:tr {:key (str (:id category) "2")}
     [:td {:style {:vertical-align "top"}}
      [:button (-> {:class "buttom-class"
-                   :on-click #(dispatch [:store-category2])}
+                   :on-click #(dispatch [:store-category3])}
                   (add-disabled ready-to-store?)) "Lagre"]]
     [:td
      [:textarea {:type "text"
