@@ -45,11 +45,13 @@
 ;; (d/transact conn {:tx-data test-transactions2})
 
 ;; (def db (d/db conn))
-;; (d/q '[:find ?e ?amount ?description ?date
+;; (d/q '[:find ?e ?amount ?description ?date ?category-id
 ;;        :where [?e :transaction/amount ?amount]
 ;;        [?e :transaction/description ?description]
 ;;        [?e :transaction/date ?date]
-;;        [?e :transaction/amount "123.23"]]
+;;        [?e :transaction/category-id ?category-id]
+;;        [?e :transaction/amount "-3681"]
+;;        ]
 ;;      (d/db conn))
 
 ;; (d/q '[:find ?e ?name ?marker
@@ -213,8 +215,10 @@
 ;;        [?e :transaction/category ?category]] (d/db conn))
 
 (defn add-id [temp-ids category]
-  (let [db-id (->> category :id (get temp-ids))]
-    (assoc category :id db-id)))
+  (if (-> category :id nil?)
+    (let [db-id (->> category :name (get temp-ids))]
+      (assoc category :id db-id))
+    category))
 
 (defn set-temp-id [category]
   (if (-> category :id nil?)
@@ -226,7 +230,7 @@
   (let [data (-> category
                  (set-temp-id)
                  (category->db-entry)) 
-        tx-response (d/transact conn {:tx-data data})
+        tx-response (d/transact conn {:tx-data [data]})
         temp-ids (:tempids tx-response)
         stored-category (add-id temp-ids category)
         ]

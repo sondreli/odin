@@ -132,6 +132,7 @@
   (-> elm  .-target (. closest ".row") .-attributes .-value .-value))
 
 (defn category-row [index category]
+  (println "edit-category-row: " category)
   [
    [:tr {:value (:id category) :key (:name category) :class "row"} 
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
@@ -149,6 +150,7 @@
   )
 
 (defn edit-category-row [index category builder-category ready-to-store?]
+  (println "edit-category-row edit: " category)
   [[:tr {:value (:id category) :key (:id category) :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Lukk"]]
@@ -174,8 +176,7 @@
                  :rows 5
                  :value (-> builder-category :marker :value)
                  :on-change #(dispatch [:mark-transactions (-> % .-target .-value)])
-                 :style {:width "100%"}}]]]]
-   )
+                 :style {:width "100%"}}]]]])
 
 (defn categories []
   (let [indexed-categories (map-indexed vector @(subscribe [:summed-categories]))

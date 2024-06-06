@@ -140,7 +140,7 @@
    ))
 
 (defn update-categories [categories builder-category]
-  (let [match-index (some (fn [[index category]] (when (= (:name category) (:name builder-category)) index))
+  (let [match-index (some (fn [[index category]] (when (= (:id category) (:id builder-category)) index))
                           (map-indexed vector categories))]
     (if (some? match-index)
       (assoc categories match-index builder-category)
@@ -353,11 +353,9 @@
    (let [current-builder-category (:builder-category db)
          new-category {:id "new-id" :name "" :marker {:value ""}}
          categories (conj (:categories db) new-category)
-         _ (println "found category: " (map #(-> % :id type) categories))
-         _ (println "edit-category3 category-id: " (type category-id))
-         new-builder-category (when (not= category-id (:id current-builder-category))
+         new-builder-category (when (not= category-id (-> current-builder-category :id str))
                                 (->>  categories
-                                      (some #(when (= category-id (:id %)) %))
+                                      (some #(when (= category-id (-> % :id str)) %))
                                       ;; (add-old-name-to-category)
                                       ))]
      (-> db

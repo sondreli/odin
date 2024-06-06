@@ -25,17 +25,17 @@
              (into [])))))
 
 (defn add-amount-to-category-map [category-map transaction]
-  (let [category-name (-> transaction :category :name)
-        acc-amount (-> category-map (get category-name) :amount)
+  (let [category-id (:category-id transaction)
+        acc-amount (-> category-map (get category-id) :amount)
         this-amount (:amount transaction)]
-    (assoc-in category-map [category-name :amount] (+ acc-amount this-amount))))
+    (assoc-in category-map [category-id :amount] (+ acc-amount this-amount))))
 
 (defn sum-categoires [categories transactions]
-  (let [category-map (into {} (map (juxt :name #(assoc % :amount 0)) categories))
+  (let [category-map (into {} (map (juxt :id #(assoc % :amount 0)) categories))
         summed-category-map (set/rename-keys (reduce add-amount-to-category-map category-map transactions)
                                              {nil "ukategorisert"})
         summed-categories (->> (conj categories {:id "ukategorisert" :name "ukategorisert"})
-                               (map #(assoc % :amount (-> summed-category-map (get (:name %)) :amount)))
+                               (map #(assoc % :amount (-> summed-category-map (get (:id %)) :amount)))
                                (sort-by :amount))
         total-out (->> summed-categories (map :amount) (filter neg?) (apply +))
         total-in (->> summed-categories (map :amount) (filter pos?) (apply +))
@@ -90,6 +90,7 @@
                                  (into []))
         categories (:categories db)
         summed-categories (sum-categoires categories period-transactions)
+        _ (println "apply-period: summed-categories: " summed-categories)
         displayed-transactions-data (displayed-transactions-data db period-transactions nil nil)
         ]
     (-> db
