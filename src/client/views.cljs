@@ -24,7 +24,7 @@
   (let [period-selector @(subscribe [:period-selector])
         transaction-years @(subscribe [:transaction-years])
         long-view (:long-view period-selector)
-        selected-year (date/year-of-period (period-selector :selected-period))
+        selected-year (date/year-of-period (:selected-period period-selector))
         label-fx (if (-> period-selector :time-unit (= :year))
                    date/localdate-str->year
                    date/localdate-str->month)]
@@ -98,35 +98,13 @@
    (for [color (map #(-> [% 0.6 0.9]
                          color/hsv2rgb
                          color/color-base10->base16
-                         color/color-str) (color/generate-hues 10))]
+                         color/color-str) (color/generate-hues 16))]
      [:option {:style {:background-color color}} color])])
 
 (defn add-disabled [props expr?]
   (if expr?
     props
     (assoc props :disabled "disabled")))
-
-(defn category-builder []
-    (let [builder-category @(subscribe [:builder-category])
-          ready-to-store? (category/ready-to-store? builder-category)]
-      (println "category-builder view: " (-> builder-category :marker type))
-      [:div
-       [:div
-        [:input {:type "text" :placeholder "Navn"
-                 :value (-> builder-category :name)
-                 :on-change #(dispatch [:update-builder-category-name (-> % .-target .-value)])}]
-        ;; [:input {:type "text" :placeholder "Farge"
-        ;;          :value (-> builder-category :color-value)
-        ;;          :on-change #(dispatch [:update-builder-category-color (-> % .-target .-value)])}]
-        (color-selector)
-        [:button (-> {:class "buttom-class"
-                      :on-click #(dispatch [:store-category2])}
-                     (add-disabled ready-to-store?)) "Lagre"]]
-       [:textarea {:type "text"
-                   :rows 5
-                   :value (-> builder-category :marker :value)
-                   :on-change #(dispatch [:mark-transactions (-> % .-target .-value)])}]])
-  )
 
 (defn get-value-of-parent-row [elm]
   (-> elm  .-target (. closest ".row") .-attributes .-value .-value))
@@ -140,7 +118,7 @@
     [:td {:bgcolor (:color category)} (:name category)]
     [:td {:align "right"} (gstring/format "%.2f"
                                           (-> category :amount (* 100) Math/round (/ 100)))]
-    [:td [:a {:on-click #(dispatch [:view-category (get-value-of-parent-row %)])}
+    [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
           "View"]]
     [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
           "Edit"]]
@@ -238,7 +216,7 @@
         [:td {:align "right" :style {:padding-right "1em"}}
          (-> transaction :date (date/unixtime->prettydate))]
         [:td (:description transaction)]
-        (when (-> transaction :category some?)
+        (when (-> transaction :category-id some?)
           [:td {:on-click #(dispatch [:view-transaction-match transaction])} "View"])
         ]
                )]]))
@@ -292,7 +270,6 @@
   ;;  (test-chart)
    (request-it-button)
    (search-bar)
-   (category-builder)
    (filter-path)
   ;;  (transactions-table)
    (diplayed-transactions-toggle-view)

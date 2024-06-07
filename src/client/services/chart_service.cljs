@@ -6,15 +6,15 @@
             [goog.object :as g]
             [goog.string :as gstring]))
 
-(defn sum-category [[category-name transactions]]
-  {:category-name category-name
+(defn sum-category [[category-id transactions]]
+  {:category-id category-id
    :amount (->> transactions
                 (map :amount)
                 (apply +))})
 
 (defn sum-month [[mnt transactions]]
   (->> transactions
-       (group-by #(-> % :category :name))
+       (group-by #(-> % :category-id))
        (seq)
        (map sum-category)
        (map #(assoc % :month mnt))))
@@ -78,7 +78,7 @@
                             .stack
                             (.keys (d3/union (clj->js (->> data
                                                            (sort-by #(-> % :amount -))
-                                                           (map :category-name)))))
+                                                           (map :category-id)))))
                             ;;  (.value (fn [[_ obj] key] (.log js/console (-> obj (.get key) clj->js (goog.object/get "amount")))))
                             (.value (fn [[_ obj] key] (-> obj (.get key) clj->js (goog.object/get "amount"))))
                             ;;  clj-index (.value (fn [obj key] (-> obj second (goog.object/get key) (goog.object/get "amount"))))
@@ -88,8 +88,8 @@
         ;; series2 (series (clj->js (make-index datann :category-name :month)))
         d3-index (d3/index data
                            #(:month %)
-                           #(:category-name %))
-        clj-index (clj->js (into [] (make-index data :date :category-name)))
+                           #(:category-id %))
+        clj-index (clj->js (into [] (make-index data :date :category-id)))
         series (stack-generator d3-index)
         ]
     ;; (.log js/console (clj->js (make-index datann :month :category-name)))
@@ -271,22 +271,25 @@
        (group-by #(-> % :date label-fx))
        (seq)
        (mapcat sum-month)
-       (map #(if (-> % :category-name nil?) (assoc % :category-name "ukategorisert") %))
+       (map #(if (-> % :category-id nil?) (assoc % :category-id "ukategorisert") %))
        (filter #(-> % :amount neg?))
        (map #(update % :amount (fn [a] (- a)))))))
 
 (defn draw-stacked-barchart [transactions categories period]
-  (let [data (period-transactions->data transactions period)
+  (let [category-map (into {} (map (juxt :id #(identity %)) categories))
+        data (period-transactions->data transactions period)
+        _ (println "draw-stacked-barchart: " data)
+        _ (.log js/console data)
         color-map (assoc (->> categories
-                              (map #(-> % (select-keys [:name :color]) vals))
+                              (map #(-> % (select-keys [:id :color]) vals))
                               (map #(apply hash-map %))
                               (reduce merge)) "ukategorisert" "#ddd")
-         series (make-d3-series data)
-         x (x-scale data)
-         y (y-scale series)
-         color (make-colors series color-map)
-         chart (make-chart data series color)
-        ]
+        _ (println "draw-stacked-barchart: color-map " color-map)
+        series (make-d3-series data)
+        x (x-scale data)
+        y (y-scale series)
+        color (make-colors series color-map)
+        chart (make-chart data series color)]
     ;;  (println color-map)
     ;;  (.log js/console x)
     ))

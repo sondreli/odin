@@ -18,7 +18,7 @@
 (defn apply-filter-path [filter-path category-map transactions]
   (case (count filter-path)
     0 transactions
-    1 (into [] (filter #(->> % :category-id (get category-map) (= (first filter-path))) transactions))
+    1 (into [] (filter #(->> % :category-id (get category-map) :name (= (first filter-path))) transactions))
     2 (let [match-category {:marker {:description [(second filter-path)]}}]
         (->> transactions
              (filter #(category/match? match-category %))

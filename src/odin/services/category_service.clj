@@ -24,13 +24,11 @@
        :body "Failed to store categories"})))
 
 (defn update-transactions-with-categories [request]
-  (let [category-updates (:body request)]
-    (doall (for [category-update category-updates]
-             (let [{add-category-updates true
-                    remove-category-updates false} (group-by #(-> % :category-id some?)
-                                                             (:updated-transactions category-update))]
-               (db/add-category-to-transactions add-category-updates)
-               (db/remove-category-from-transactions remove-category-updates))))
+  (let [updated-transactions (:body request)
+        {add-category-updates true
+         remove-category-updates false} (group-by #(-> % :category-id some?) updated-transactions)]
+    (db/add-category-to-transactions add-category-updates)
+    (db/remove-category-from-transactions remove-category-updates)
     (if true
       {:status 200
        :headers {"Content-Type" "text/html"}

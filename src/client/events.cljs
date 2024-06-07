@@ -147,52 +147,6 @@
       (conj categories builder-category))))
 
 (reg-event-fx
- :store-category2
- (fn
-   [{db :db} _]
-   ; how to distinguis between edits and new category?
-   ; update if categoryId is provided
-   ; create new if no categoryId
-   ; new category flow
-   ; call POST /category with builder-category
-   ; then update all transactions with new category-id
-   ; then call update transctions endpoint
-   ; category edit
-   ; only update transactions if marker changed?
-   (let [builder-category (if (-> db :builder-category :id (= "new-id"))
-                            (-> db :builder-category (dissoc :id))
-                            (:builder-category db))
-
-         all-transactions (:all-transactions db)
-         period-transactions (:period-transactions db)
-         _ (println "store-category2 10 period-transactions: " (take 10 period-transactions))
-         accumulator (category/add-category2 all-transactions builder-category)
-         _ (println "store-category2 10 accumulator - only-updates: " (take 10 (:only-updates accumulator)))
-         _ (println "store-category2 10 accumulator - updated-seq: " (take 10 (:updated-seq accumulator)))
-        ;;  updated-all-transactions (category/add-category all-transactions builder-category)
-         updated-all-transactions (:updated-seq accumulator)
-         updated-period-transactions (category/add-category period-transactions builder-category)
-         updated-categories (update-categories (:categories db) builder-category)
-         summed-categories (utils/sum-categoires updated-categories updated-period-transactions)
-         updated-db (-> db
-                        (assoc :categories updated-categories)
-                        (assoc :summed-categories summed-categories)
-                        (assoc :builder-category nil)
-                        (assoc :all-transactions updated-all-transactions)
-                        (assoc :period-transactions updated-period-transactions)
-                        (assoc :displayed-transactions updated-period-transactions))]
-     {:http-xhrio {:method          :post
-                   :uri             "http://localhost/categories"
-                   :params          (clj->js [{:category builder-category
-                                               :updated-transactions (:only-updates accumulator)}])
-                   :format          (ajax/json-request-format)
-                   :response-format (ajax/json-response-format {:keywords? true})
-                   :on-success      [:category-stored-in-db-success]
-                   :on-failure      [:category-stored-in-db-failure]}
-      :db  updated-db})
-   ))
-
-(reg-event-fx
  :store-category3
  (fn
    [{db :db} _]
@@ -208,18 +162,17 @@
                    :on-failure      [:category-stored-in-db-failure]}
       :db db})))
 
-(reg-event-db
+(reg-event-fx
  :stored-category-response
  (fn
-   [db [_ response]]
+   [{db :db
+     [_ response] :event} _]
+   (println "stored-category-response: " response)
    (let [stored-category (js->clj response)
          all-transactions (:all-transactions db)
          period-transactions (:period-transactions db)
          _ (println "stored-category-response stored-category: " stored-category)
          accumulator (category/add-category2 all-transactions stored-category)
-         _ (println "stored-category-response 10 accumulator - only-updates: " (take 10 (:only-updates accumulator)))
-         _ (println "stored-category-response 10 accumulator - updated-seq: " (take 10 (:updated-seq accumulator)))
-        ;;  updated-all-transactions (category/add-category all-transactions builder-category)
          updated-all-transactions (:updated-seq accumulator)
          updated-period-transactions (category/add-category period-transactions stored-category)
          updated-categories (update-categories (:categories db) stored-category)
@@ -232,7 +185,15 @@
                         (assoc :period-transactions updated-period-transactions)
                         (assoc :displayed-transactions updated-period-transactions))]
      (println "store-categories-success")
-     updated-db)))
+     {:http-xhrio {:method          :post
+                   :uri             "http://localhost/transactions/update"
+                   :params          (clj->js (:only-updates accumulator))
+                   :format          (ajax/json-request-format)
+                   :response-format (ajax/json-response-format {:keywords? true})
+                   :on-success      [:category-stored-in-db-success]
+                   :on-failure      [:category-stored-in-db-failure]}
+      :db updated-db})))
+
 
 (reg-event-db
  :delete-category

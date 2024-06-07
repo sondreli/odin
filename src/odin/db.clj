@@ -239,7 +239,7 @@
 (defn add-category [transaction]
   (let [eid (:db-id transaction)
         category-id (:category-id transaction)]
-    {:db/id eid :transaction/category-id [:category/id category-id]}))
+    {:db/id eid :transaction/category-id category-id}))
 
 (defn add-category-to-transactions [transactions]
   (println "add-category-to-transactions" (count transactions))

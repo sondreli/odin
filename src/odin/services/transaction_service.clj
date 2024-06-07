@@ -327,6 +327,7 @@
                                               (map replace-nil-description))]
     (println "append-new-transactions2: " (count transactions-in-db) (count new-transactions))
     (println "categorized-replace-transactions: " categorized-replace-transactions)
+    (println "append-new-transactions2: have category " (filter #(-> % :category-id some?) transactions-in-db))
     ; find the old one, already have it in retrieved from db
     ; move it's category over to new transaction
     ; create the :amount and :description keys
