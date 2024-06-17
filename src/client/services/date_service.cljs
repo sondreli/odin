@@ -144,7 +144,7 @@
   (let [date (-> unixtime js/Date. .getDate)]
     (if (-> date (< 10))
       (str "0" date)
-      date)))
+      (str date))))
 
 (defn get-month-label [unixtime]
   (let [date (js/Date. unixtime)
@@ -166,6 +166,13 @@
         ]
     (str year "-" label)))
 
+(defn day-label->period [label period]
+  (let [date (:start period)
+        day (js/parseInt label)
+        start (unixtime->localdate (.setDate date day))
+        end (unixtime->localdate (.setDate date (inc day)))]
+    {:start start :end end}))
+
 (defn month-label->period [month-label]
   (let [[year-last2 label] (s/split month-label #"-")
         year (str "20" year-last2)
@@ -183,6 +190,12 @@
                       "Nov" 10
                       "Des" 11)]
     (month-period month-index year)))
+
+(defn date-label->period [label period]
+  (println "date-label->period: " label (type label))
+  (cond
+    (re-matches #"[0-9]{2}" label) (day-label->period label period)
+    (re-matches #"[0-9]{2}-[a-zA-Z]{3}" label) (month-label->period label)))
 
 (defn period [month-index year]
   {:start (first-day-of-month month-index year)

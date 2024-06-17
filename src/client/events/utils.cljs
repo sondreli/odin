@@ -15,33 +15,53 @@
 ;; now we create an interceptor using `after`
 (def check-spec-interceptor (after (partial check-and-throw :client.db/db)))
 
+(defn filter-ukategorsert [fx transactions]
+  (filter #(and (-> % :category-id nil?)
+                (-> % :amount fx)) transactions))
+
+(defn filter-category [transactions category category-map]
+  (cond
+    (= category "ukategorisert-in") (filter-ukategorsert pos? transactions)
+    (= category "ukategorisert-out") (filter-ukategorsert neg? transactions)
+    :else (filter #(->> % :category-id (get category-map) :name (= category)) transactions)))
+
 (defn apply-filter-path [filter-path category-map transactions]
   (case (count filter-path)
     0 transactions
-    1 (into [] (filter #(->> % :category-id (get category-map) :name (= (first filter-path))) transactions))
+    1 (into [] (filter-category transactions (first filter-path) category-map))
     2 (let [match-category {:marker {:description [(second filter-path)]}}]
         (->> transactions
              (filter #(category/match? match-category %))
              (into [])))))
 
-(defn add-amount-to-category-map [category-map transaction]
-  (let [category-id (:category-id transaction)
-        acc-amount (-> category-map (get category-id) :amount)
-        this-amount (:amount transaction)]
-    (assoc-in category-map [category-id :amount] (+ acc-amount this-amount))))
+(defn assoc-amount [category-map category-id transaction-amount]
+  (let [acc-amount (-> category-map (get category-id) :amount)]
+    (assoc-in category-map [category-id :amount] (+ acc-amount transaction-amount))))
+
+(defn add-amount-to-amount-map [amount-map transaction]
+  (cond
+      (and (-> transaction :category-id nil?)
+           (-> transaction :amount pos?)) (assoc-amount amount-map "ukategorisert-in" (:amount transaction))
+      (and (-> transaction :category-id nil?)
+           (-> transaction :amount neg?)) (assoc-amount amount-map "ukategorisert-out" (:amount transaction))
+      :else (assoc-amount amount-map (:category-id transaction) (:amount transaction))))
 
 (defn sum-categoires [categories transactions]
-  (let [category-map (into {} (map (juxt :id #(assoc % :amount 0)) categories))
-        summed-category-map (set/rename-keys (reduce add-amount-to-category-map category-map transactions)
-                                             {nil "ukategorisert"})
-        summed-categories (->> (conj categories {:id "ukategorisert" :name "ukategorisert"})
-                               (map #(assoc % :amount (-> summed-category-map (get (:id %)) :amount)))
+  (let [extended-categories (conj categories
+                                  {:id "ukategorisert-in" :name "ukategorisert-in"}
+                                  {:id "ukategorisert-out" :name "ukategorisert-out"})
+        amount-map (into {} (map #(vector (:id %) {:amount 0}) extended-categories))
+        summed-amount-map (reduce add-amount-to-amount-map amount-map transactions)
+        summed-categories (->> extended-categories ;(conj categories {:id "ukategorisert" :name "ukategorisert"})
+                               (map #(assoc % :amount (-> summed-amount-map (get (:id %)) :amount)))
                                (sort-by :amount))
         total-out (->> summed-categories (map :amount) (filter neg?) (apply +))
         total-in (->> summed-categories (map :amount) (filter pos?) (apply +))
         accounting (concat summed-categories [{:id "out" :name "out" :amount total-out}
                                               {:id "in" :name "in" :amount total-in}])]
     accounting))
+
+(defn sum-categoires2 [categories transactions])
 
 (defn displayed-transactions-data [db
                               new-period-transactions

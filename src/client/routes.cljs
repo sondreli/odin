@@ -7,7 +7,7 @@
             [client.services.date-service :as date]))
 
 (defn custom-match [key]
-  [#"[A-Za-z0-9% æøåÆØÅ]+" key])
+  [#"[A-Za-z0-9:%\*\- æøåÆØÅ]+" key])
 
 (def routes
   (atom

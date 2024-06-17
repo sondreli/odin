@@ -43,6 +43,7 @@
 
 (cpj/defroutes app
   (cpj/GET "/" params token_handler) ; misses some favicon.ico requests
+  (cpj/GET "/period/**" params token_handler)
   (cpj/GET "/transactions/:id/details" [id] (partial transaction/transaction_details_handler id))
   (cpj/GET "/transactions" params transaction/transaction_handler)
   (cpj/GET "/categories" params category/categories-handler)

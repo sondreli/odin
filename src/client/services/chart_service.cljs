@@ -4,7 +4,8 @@
             [client.services.date-service :as date]
             [re-frame.core :refer [dispatch]]
             [goog.object :as g]
-            [goog.string :as gstring]))
+            [goog.string :as gstring]
+            ))
 
 (defn sum-category [[category-id transactions]]
   {:category-id category-id
@@ -163,7 +164,7 @@
       (.style "left" (-> event (.-pageX) (+ 10) (str "px")))
       (.style "top" (-> event (.-pageY) (- 15) (str "px")))))
 
-(defn make-chart [data series color]
+(defn make-chart [data series color category-map period]
   (let [x (x-scale data)
         y (y-scale series)
         height 500
@@ -196,7 +197,9 @@
                 (.attr "height" (fn [d] (- (-> d first y) (-> d second y))))
                 (.on "mouseover" (fn [event d]
                                    (let [key (g/get d "key")
-                                         tooltip-text (str key " - " (-> d (g/get "data") (get 1) (.get key) :amount))]
+                                         category-name (->> key (get category-map) :name)
+                                         category-amount (-> d (g/get "data") (get 1) (.get key) :amount)
+                                         tooltip-text (str category-name " - " category-amount)]
                                      (this-as this (-> d3 (.select this)
                                                        (.transition)
                                                        (.duration "50")
@@ -210,11 +213,11 @@
                                                             (.duration "50")
                                                             (.attr "opacity" "1")))
                                   (show-tooltip-label "div.tooltip-barchart" "0")))
-                (.on "click" (fn [event d] (let [category (-> d (g/get "key"))
+                (.on "click" (fn [event d] (let [category (->> (g/get d "key") (get category-map) :name)
                                                  month (-> d (g/get "data") first)
-                                                 period (date/month-label->period month)]
+                                                 sub-period (date/date-label->period month period)]
                                              (show-tooltip-label "div.tooltip-barchart" "0")
-                                             (dispatch [:navigate [period :table [category]]]))))
+                                             (dispatch [:navigate [sub-period :table [category]]]))))
                 )
         svg2 (-> d3
                  (.select "#mychart svg")
@@ -261,6 +264,14 @@
       (< days 732) :2years
       :else :5years)))
 
+(defn add-uncategorized-ids [transaction]
+  (cond
+      (and (-> transaction :category-id nil?)
+           (-> transaction :amount pos?)) (assoc transaction :category-id "ukategorisert-in")
+      (and (-> transaction :category-id nil?)
+           (-> transaction :amount neg?)) (assoc transaction :category-id "ukategorisert-out")
+      :else transaction))
+
 (defn period-transactions->data [period-transactions period]
   (let [period-length (period-length period)
         label-fx (case period-length
@@ -268,28 +279,32 @@
                    :year date/get-month-label
                    :else date/get-month-label)]
     (->> period-transactions
-       (group-by #(-> % :date label-fx))
-       (seq)
-       (mapcat sum-month)
-       (map #(if (-> % :category-id nil?) (assoc % :category-id "ukategorisert") %))
-       (filter #(-> % :amount neg?))
-       (map #(update % :amount (fn [a] (- a)))))))
+         (map add-uncategorized-ids)
+         (group-by #(-> % :date label-fx))
+         (seq)
+         (mapcat sum-month)
+         (map #(update % :amount (fn [a] (- a)))))))
 
 (defn draw-stacked-barchart [transactions categories period]
-  (let [category-map (into {} (map (juxt :id #(identity %)) categories))
+  (let [category-map (into {} (map (juxt :id #(identity %))
+                                   (-> categories
+                                       (conj {:id "ukategorisert-in" :name "ukategorisert-in"})
+                                       (conj {:id "ukategorisert-out" :name "ukategorisert-out"}))))
         data (period-transactions->data transactions period)
         _ (println "draw-stacked-barchart: " data)
         _ (.log js/console data)
-        color-map (assoc (->> categories
+        color-map (-> (->> categories
                               (map #(-> % (select-keys [:id :color]) vals))
                               (map #(apply hash-map %))
-                              (reduce merge)) "ukategorisert" "#ddd")
+                              (reduce merge))
+                      (assoc "ukategorisert-in" "#ddd")
+                      (assoc "ukategorisert-out" "#edd"))
         _ (println "draw-stacked-barchart: color-map " color-map)
         series (make-d3-series data)
         x (x-scale data)
         y (y-scale series)
         color (make-colors series color-map)
-        chart (make-chart data series color)]
+        chart (make-chart data series color category-map period)]
     ;;  (println color-map)
     ;;  (.log js/console x)
     ))

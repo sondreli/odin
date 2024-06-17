@@ -129,7 +129,7 @@
 
 (defn edit-category-row [index category builder-category ready-to-store?]
   (println "edit-category-row edit: " category)
-  [[:tr {:value (:id category) :key (:id category) :class "row"}
+  [[:tr {:value (:id category) :key (:name category) :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Lukk"]]
     [:td {:bgcolor (:color category)}
@@ -138,7 +138,7 @@
      (color-selector)]
     [:td {:align "right"} (gstring/format "%.2f"
                                           (-> category :amount (* 100) Math/round (/ 100)))]
-    [:td [:a {:on-click #(dispatch [:view-category (get-value-of-parent-row %)])}
+    [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
           "View"]]
     [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
           "Edit"]]
@@ -201,8 +201,37 @@
     (assoc props :bgcolor (->> transaction :category-id (get category-map) :color))
     props))
 
+(defn menu-item [label]
+  [:a {:href "#"
+       :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
+   label])
+
+(defn add-category-menu-edit []
+  [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0
+   [:li (menu-item "i kategori")]
+   [:li (menu-item "som filter")]])
+
+(defn add-category-menu [categories]
+  [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0
+   [:li.dropdown (menu-item "i kategori")
+    [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
+     (for [category categories]
+       [:li
+        [:a {:href "#"
+             :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
+         (:name category)]])]]
+   [:li.dropdown (menu-item "som filter")
+    [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
+     (for [category categories]
+       [:li
+        [:a {:href "#"
+             :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
+         (:name category)]])]]
+   ])
+
 (defn transactions-table [transactions categories]
   (let [;transactions @(subscribe [:displayed-transactions])
+        builder-category @(subscribe [:builder-category])
         indexed-transactions (map-indexed vector transactions)
         category-map (into {} (map (juxt :id #(identity %)) categories))]
     [:table
@@ -216,8 +245,18 @@
         [:td {:align "right" :style {:padding-right "1em"}}
          (-> transaction :date (date/unixtime->prettydate))]
         [:td (:description transaction)]
-        (when (-> transaction :category-id some?)
-          [:td {:on-click #(dispatch [:view-transaction-match transaction])} "View"])
+        (if (-> transaction :category-id some?)
+          [:td {:on-click #(dispatch [:view-transaction-match transaction])} "View"]
+          [:td ""])
+        (if (-> transaction :category-id nil?)
+          [:div.dropdown.inline-block.relative
+           [:button.bg-gray-300.text-gray-700.font-semibold.py-0.px-4.inline-flex.items-center
+            [:span "Legg til"]]
+            (if (nil? builder-category)
+              (add-category-menu categories)
+              (add-category-menu-edit))
+            ]
+          [:td ""])
         ]
                )]]))
 
@@ -233,10 +272,8 @@
         categories @(subscribe [:categories])
         period @(subscribe [:period])
         display-option (:display-option displayed-transactions-data)
-        _ (println "displayed-transactions-viewer: " display-option)
-        _ (println (str "display-option: " display-option))
         displayed-transactions (:displayed-transactions displayed-transactions-data)]
-    (println "displayed-transactions-viewer 10 transactions: " (take 10 displayed-transactions))
+    ;; (println "displayed-transactions-viewer 10 transactions: " (take 10 displayed-transactions))
     (case display-option
       :table (transactions-table displayed-transactions categories)
       :bar-chart (chart/draw-stacked-barchart displayed-transactions categories period))
