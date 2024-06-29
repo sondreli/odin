@@ -201,10 +201,21 @@
     (assoc props :bgcolor (->> transaction :category-id (get category-map) :color))
     props))
 
+(defn menu-angle []
+  [:svg {:class "w-3 h-3 ms-3 ml-1" :aria-hidden "true" :xmlns "http://www.w3.org/2000/svg" :fill "none" :viewBox "0 0 10 6"}
+   [:path {:stroke "currentColor" :stroke-linecap "round" :stroke-linejoin "round" :stroke-width "2" :d "m1 1 4 4 4-4"}]])
+
 (defn menu-item [label]
   [:a {:href "#"
        :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
    label])
+
+(defn submenu [label]
+  [:button {:id "doubleDropdownButton"
+            :class "flex overflow-hidden items-center justify-between w-full px-4 py-0 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white"
+            :data-dropdown-toggle "doubleDropdown"
+            :data-dropdown-placement "right-start" :type "button"}
+   label (menu-angle)])
 
 (defn add-category-menu-edit []
   [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0
@@ -212,15 +223,21 @@
    [:li (menu-item "som filter")]])
 
 (defn add-category-menu [categories]
-  [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0
-   [:li.dropdown (menu-item "i kategori")
-    [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
-     (for [category categories]
-       [:li
-        [:a {:href "#"
-             :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
-         (:name category)]])]]
-   [:li.dropdown (menu-item "som filter")
+  [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0.whitespace-nowrap
+   [:li.dropdown (submenu "i kategori")
+    ; button
+    ; div
+    [:div {:id "doubleDropdown"
+           :class "z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow w-44 dark:bg-gray-700"}
+     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
+      {:aria-lablledby "doubleDropdownButton"}
+      (for [category categories]
+        [:li
+         [:a {:href "#"
+              :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
+          (:name category)]])]]
+    ]
+   [:li.dropdown (submenu "som filter")
     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
      (for [category categories]
        [:li
@@ -250,8 +267,12 @@
           [:td ""])
         (if (-> transaction :category-id nil?)
           [:div.dropdown.inline-block.relative
-           [:button.bg-gray-300.text-gray-700.font-semibold.py-0.px-4.inline-flex.items-center
-            [:span "Legg til"]]
+           [:button ;.bg-gray-300.text-gray-700.font-semibold.py-0.px-4.inline-flex.items-center.text-sm
+            {:type "button" :data-dropdown-toggle "dropdown"
+             :class "text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-3 py-2.5 text-center inline-flex items-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800"}
+            ;; [:span "Legg til" (menu-angle)]
+            "Legg til " (menu-angle)
+            ]
             (if (nil? builder-category)
               (add-category-menu categories)
               (add-category-menu-edit))
