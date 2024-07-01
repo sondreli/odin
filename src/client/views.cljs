@@ -212,7 +212,10 @@
 
 (defn submenu [label]
   [:button {:id "doubleDropdownButton"
-            :class "flex overflow-hidden items-center justify-between w-full px-4 py-0 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white"
+            :class "flex items-center justify-between w-full px-2 py-0 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white"
+            ;; :class "flex items-center"
+            :style {:overflow "hidden"
+                    :white-space "nowrap"}
             :data-dropdown-toggle "doubleDropdown"
             :data-dropdown-placement "right-start" :type "button"}
    label (menu-angle)])
@@ -227,15 +230,15 @@
    [:li.dropdown (submenu "i kategori")
     ; button
     ; div
-    [:div {:id "doubleDropdown"
-           :class "z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow w-44 dark:bg-gray-700"}
-     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
-      {:aria-lablledby "doubleDropdownButton"}
-      (for [category categories]
-        [:li
-         [:a {:href "#"
-              :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
-          (:name category)]])]]
+    [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
+     {:aria-lablledby "doubleDropdownButton"}
+     (for [category categories]
+       [:li
+        [:a {:href "#"
+             :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
+         (:name category)]])]
+    ;; [:div {:id "doubleDropdown"
+    ;;        :class "z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow w-44 dark:bg-gray-700"}]
     ]
    [:li.dropdown (submenu "som filter")
     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
@@ -266,17 +269,22 @@
           [:td {:on-click #(dispatch [:view-transaction-match transaction])} "View"]
           [:td ""])
         (if (-> transaction :category-id nil?)
-          [:div.dropdown.inline-block.relative
+          [:div {:id "multi-dropdown"
+                 :class "dropdown inline-block relative"
+                ;;  :class "z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow w-44 dark:bg-gray-700"
+                 }
            [:button ;.bg-gray-300.text-gray-700.font-semibold.py-0.px-4.inline-flex.items-center.text-sm
-            {:type "button" :data-dropdown-toggle "dropdown"
+            {:type "button" :data-dropdown-toggle "multi-dropdown"
              :class "text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-3 py-2.5 text-center inline-flex items-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800"}
             ;; [:span "Legg til" (menu-angle)]
-            "Legg til " (menu-angle)
-            ]
+            "Legg til " (menu-angle)]
+          ;;  [:ul
+          ;;   [:li "hei"]
+          ;;   [:li "hallo"]]
             (if (nil? builder-category)
               (add-category-menu categories)
               (add-category-menu-edit))
-            ]
+           ]
           [:td ""])
         ]
                )]]))
