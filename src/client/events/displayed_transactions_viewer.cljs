@@ -75,3 +75,18 @@
    (let []
      (println filter-path period display-option)
      (utils/apply-update db period filter-path display-option))))
+
+(defn as-filter-in-edit [db category]
+  (-> db
+      (update-in [:builder-category :marker :value] str "\n" category)
+      (update-in [:builder-category :marker :description] conj category)))
+
+(reg-event-db
+ :add-filter
+ (fn [db [_ transaction-desc add-category]]
+   (println "add-filter: " transaction-desc)
+   (case add-category
+     :as-filter-in-edit (as-filter-in-edit db transaction-desc)
+     :to-category-in-edit (as-filter-in-edit db transaction-desc)
+     :as-filter (as-filter-in-edit db transaction-desc)
+     :to-category (as-filter-in-edit db transaction-desc))))

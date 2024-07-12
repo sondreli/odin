@@ -106,3 +106,9 @@
    (-> builder-category :color some?)
    (-> builder-category :marker some?)
    (-> builder-category :marker :value count (> 0))))
+
+;; (let [transactions [;{:category-id "mat" :description "mega"}
+;;                     {:category-id "mat" :description "coop mega"}
+;;                     {:category-id "mat" :description "megaflis"}]
+;;       builder-category {:id "mat" :marker {:description ["coop mega"]}}]
+;;   (add-category2 transactions builder-category))

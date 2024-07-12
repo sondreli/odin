@@ -84,16 +84,16 @@
                                   (category/mark-transactions builder-category))
      :display-option :table}))
 
-(defn apply-category [db filter-path]
-  (let [;filter-path (if (some? category)[category] [])
+(defn apply-category [db new-filter-path]
+  (let [filter-path (if (some? new-filter-path) new-filter-path (:filter-path db))
         category-map (into {} (map (juxt :id #(identity %)) (:categories db)))
         displayed-transactions (->> (db :period-transactions)
                                     (apply-filter-path filter-path category-map)
                                     (category/mark-transactions (db :builder-category)))]
+    (println "apply-category: " filter-path)
     (-> db
         (assoc :filter-path filter-path)
-        (assoc-in [:displayed-transactions-data :displayed-transactions] displayed-transactions)
-        )))
+        (assoc-in [:displayed-transactions-data :displayed-transactions] displayed-transactions))))
 
 ;; (defn period [period-selector]
 ;;   (println "period")

@@ -1,5 +1,7 @@
 (ns odin.db-schemas)
 
+; use conformity for schema migrations
+
 (def transaction-schema [{:db/ident :transaction/description
                           :db/valueType :db.type/string
                           :db/cardinality :db.cardinality/one
@@ -19,6 +21,11 @@
                           :db/valueType :db.type/ref
                           :db/cardinality :db.cardinality/one
                           :db/doc "The id of the category this transaction is assigned to"}
+
+                         {:db/ident :transaction/manually-categorized
+                          :db/valueType :db.type/boolean
+                          :db/cardinality :db.cardinality/one
+                          :db/doc "True if manually put into a category. If filtered, then false"}
 
                          {:db/ident :transaction/source
                           :db/valueType :db.type/string

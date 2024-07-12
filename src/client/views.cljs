@@ -205,9 +205,10 @@
   [:svg {:class "w-3 h-3 ms-3 ml-1" :aria-hidden "true" :xmlns "http://www.w3.org/2000/svg" :fill "none" :viewBox "0 0 10 6"}
    [:path {:stroke "currentColor" :stroke-linecap "round" :stroke-linejoin "round" :stroke-width "2" :d "m1 1 4 4 4-4"}]])
 
-(defn menu-item [label]
+(defn menu-item [label add-type transaction-desc]
   [:a {:href "#"
-       :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
+       :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"
+       :on-click #(dispatch [:add-filter transaction-desc add-type])}
    label])
 
 (defn submenu [label]
@@ -220,38 +221,26 @@
             :data-dropdown-placement "right-start" :type "button"}
    label (menu-angle)])
 
-(defn add-category-menu-edit []
+(defn add-category-menu-edit [transaction-desc]
   [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0
-   [:li (menu-item "i kategori")]
-   [:li (menu-item "som filter")]])
+   [:li (menu-item "i kategori" :to-category-in-edit transaction-desc)]
+   [:li (menu-item "som filter" :as-filter-in-edit transaction-desc)]])
 
-(defn add-category-menu [categories]
+(defn add-category-menu [categories transaction-desc]
   [:ul.dropdown-content.absolute.hidden.text-gray-700.pt-0.whitespace-nowrap
    [:li.dropdown (submenu "i kategori")
-    ; button
-    ; div
     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
      {:aria-lablledby "doubleDropdownButton"}
      (for [category categories]
-       [:li
-        [:a {:href "#"
-             :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
-         (:name category)]])]
-    ;; [:div {:id "doubleDropdown"
-    ;;        :class "z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow w-44 dark:bg-gray-700"}]
-    ]
+       [:li (menu-item (:name category) :to-category transaction-desc)])]]
    [:li.dropdown (submenu "som filter")
     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
      (for [category categories]
-       [:li
-        [:a {:href "#"
-             :class "rounded bg-gray-200 hover:bg-gray-300 py-0 px-4 block whitespace-no-wrap"}
-         (:name category)]])]]
+       [:li (menu-item (:name category) :as-filter transaction-desc)])]]
    ])
 
 (defn transactions-table [transactions categories]
-  (let [;transactions @(subscribe [:displayed-transactions])
-        builder-category @(subscribe [:builder-category])
+  (let [builder-category @(subscribe [:builder-category])
         indexed-transactions (map-indexed vector transactions)
         category-map (into {} (map (juxt :id #(identity %)) categories))]
     [:table
@@ -276,14 +265,10 @@
            [:button ;.bg-gray-300.text-gray-700.font-semibold.py-0.px-4.inline-flex.items-center.text-sm
             {:type "button" :data-dropdown-toggle "multi-dropdown"
              :class "text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-3 py-2.5 text-center inline-flex items-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800"}
-            ;; [:span "Legg til" (menu-angle)]
             "Legg til " (menu-angle)]
-          ;;  [:ul
-          ;;   [:li "hei"]
-          ;;   [:li "hallo"]]
             (if (nil? builder-category)
-              (add-category-menu categories)
-              (add-category-menu-edit))
+              (add-category-menu categories (:description transaction))
+              (add-category-menu-edit (:description transaction)))
            ]
           [:td ""])
         ]

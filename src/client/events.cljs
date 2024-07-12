@@ -39,13 +39,6 @@
        (assoc :categories categories)))))
 
 (reg-event-db
- :category-stored-in-db-success
- (fn
-   [db [_ response]]
-   (println "store-categories-success")
-   db))
-
-(reg-event-db
  :category-stored-in-db-failure
  (fn
    [db [_ response]]
@@ -183,14 +176,15 @@
                         (assoc :builder-category nil)
                         (assoc :all-transactions updated-all-transactions)
                         (assoc :period-transactions updated-period-transactions)
-                        (assoc :displayed-transactions updated-period-transactions))]
+                        (assoc-in [:displayed-transactions-data :displayed-transactions] updated-period-transactions)
+                        )]
      (println "store-categories-success")
      {:http-xhrio {:method          :post
                    :uri             "http://localhost/transactions/update"
                    :params          (clj->js (:only-updates accumulator))
                    :format          (ajax/json-request-format)
                    :response-format (ajax/json-response-format {:keywords? true})
-                   :on-success      [:category-stored-in-db-success]
+                   :on-success      [:view-category-period [nil nil nil]]
                    :on-failure      [:category-stored-in-db-failure]}
       :db updated-db})))
 

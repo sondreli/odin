@@ -244,15 +244,13 @@
 (defn add-category-to-transactions [transactions]
   (println "add-category-to-transactions" (count transactions))
   (let [all-updates (map add-category transactions)]
-    (println all-updates)
     (d/transact conn {:tx-data all-updates})))
 
 (defn remove-category-from-transactions [transaction-updates]
   (println "remove-category-from-transactions" (count transaction-updates))
   (let [data (map #(vector :db/retract
                            (:db-id %)
-                           :transaction/category-id (-> % :old-category-id pr-edn-str)) transaction-updates)]
-    (println data)
+                           :transaction/category-id (:old-category-id %)) transaction-updates)]
     (d/transact conn {:tx-data data})))
 
 (defn get-categories []
