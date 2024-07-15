@@ -17,8 +17,8 @@
                 :asset-path "/js"
                 :target :browser
                 :modules {:main {:init-fn client.core/main!}}
-                ;; :js-options {:resolve {"d3" {:target :npm
-                ;;                              :require "d3/dist/d3.js"}}}
+                :js-options {:resolve {"d3" {:target :npm
+                                             :require "d3/dist/d3.js"}}}
                 :devtools {:after-load client.core/reload!
                            :http-root "public"
                            :http-port 4000}}}

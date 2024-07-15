@@ -10,7 +10,8 @@
   ring/ring-jetty-adapter {:mvn/version "1.9.5"}
   ring/ring-json {:mvn/version "0.5.1"}
   ring-cors/ring-cors {:mvn/version "0.1.13"}
-  compojure/compojure {:mvn/version "1.6.2"}}
+  compojure/compojure {:mvn/version "1.6.2"}
+  io.rkn/conformity {:mvn/version "0.5.4"}}
  :mvn/repos
  {"central"   {:url "https://repo1.maven.org/maven2/"}}
  :aliases
