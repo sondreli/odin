@@ -6,6 +6,9 @@
   clj-http/clj-http {:mvn/version "3.12.3"}
   clj-fuzzy/clj-fuzzy {:mvn/version "0.4.1"}
   com.datomic/local {:mvn/version "1.0.267"}
+;;   com.datomic/datomic-free {:mvn/version "0.9.5697"}
+  com.taoensso/faraday {:mvn/version "1.12.3"}
+  ;; com.taoensso/faraday {:mvn/version "1.11.4"}
   ring/ring-core {:mvn/version "1.9.5"}
   ring/ring-jetty-adapter {:mvn/version "1.9.5"}
   ring/ring-json {:mvn/version "0.5.1"}

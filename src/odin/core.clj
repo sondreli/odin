@@ -11,6 +11,7 @@
             [odin.services.auth-service :as auth]
             [odin.services.transaction-service :as transaction]
             [odin.services.category-service :as category]
+            [odin.services.migration-service :as migration]
             [ring.adapter.jetty :as jetty]
             [ring.util.codec :as codec]
             [ring.middleware.params :as rmp]
@@ -66,6 +67,7 @@
       :join? true}))
 
 (defn -main [& args]
+  (migration/migrate)
   (.start (Thread. run_server))
   (transaction/get-all-transactions)
 
