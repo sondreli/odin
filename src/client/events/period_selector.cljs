@@ -37,12 +37,17 @@
     new-period))
 
 (reg-event-fx
- :set-time-unit
+ :set-period-type
  (fn
    [{db :db
-    [_ time-unit] :event} _]
-   (let [new-period (if (= time-unit :year)
-                      (new-year-period db)
-                      (new-month-period db))]
+    [_ period-type] :event} _]
+   (let [
+        ;;  new-period (if (= time-unit :year)
+        ;;               (new-year-period db)
+        ;;               (new-month-period db))
+         new-period (case period-type
+                       :year (new-year-period db)
+                       :months (assoc (new-month-period db) :period-type :months)
+                       :month (new-month-period db))]
      (dispatch [:navigate [new-period nil nil]])
      {:db db})))

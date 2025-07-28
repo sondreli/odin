@@ -50,3 +50,8 @@
  :filter-path
  (fn [db _]
    (:filter-path db)))
+
+(reg-sub
+ :transaction-row-editor
+ (fn [db _]
+   (:transaction-row-editor db)))

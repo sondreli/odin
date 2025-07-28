@@ -11,7 +11,7 @@
             [odin.services.auth-service :as auth]
             [odin.services.transaction-service :as transaction]
             [odin.services.category-service :as category]
-            [odin.services.migration-service :as migration]
+            ;; [odin.services.migration-service :as migration]
             [ring.adapter.jetty :as jetty]
             [ring.util.codec :as codec]
             [ring.middleware.params :as rmp]
@@ -49,6 +49,7 @@
   (cpj/GET "/transactions" params transaction/transaction_handler)
   (cpj/GET "/categories" params category/categories-handler)
   (cpj/POST "/category" params category/store-category-handler)
+  (cpj/DELETE "/category/:id" [id] (partial category/delete-category-handler id))
   (cpj/POST "/transactions/update" params category/update-transactions-with-categories)
   )
 
@@ -56,18 +57,19 @@
   (-> app
       (wrap-json-body {:key-fn keyword})
       (wrap-cors :access-control-allow-origin [#"http://localhost:4000"]
-                 :access-control-allow-methods [:get :put :post :delete])
+                 :access-control-allow-methods [:get :put :post :delete]
+                 :access-control-allow-headers ["Origin" "X-Requested-With" "Content-Type" "Accept"])
       ;; rmp/wrap-params
       ;; rmmp/wrap-multipart-params
       ))
 
 (defn run_server []
   (jetty/run-jetty app-handler
-     {:port 8080
-      :join? true}))
+                   {:port 8080
+                    :join? true}))
 
 (defn -main [& args]
-  (migration/migrate)
+  ;; (migration/migrate)
   (.start (Thread. run_server))
   (transaction/get-all-transactions)
 

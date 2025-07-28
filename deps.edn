@@ -7,14 +7,19 @@
   clj-fuzzy/clj-fuzzy {:mvn/version "0.4.1"}
   com.datomic/local {:mvn/version "1.0.267"}
 ;;   com.datomic/datomic-free {:mvn/version "0.9.5697"}
-  com.taoensso/faraday {:mvn/version "1.12.3"}
-  ;; com.taoensso/faraday {:mvn/version "1.11.4"}
-  ring/ring-core {:mvn/version "1.9.5"}
+  ;; ring/ring-core {:mvn/version "1.9.5"}
+  ring/ring-core {:mvn/version "1.12.2"}
   ring/ring-jetty-adapter {:mvn/version "1.9.5"}
   ring/ring-json {:mvn/version "0.5.1"}
   ring-cors/ring-cors {:mvn/version "0.1.13"}
   compojure/compojure {:mvn/version "1.6.2"}
-  io.rkn/conformity {:mvn/version "0.5.4"}}
+  ;; io.rkn/conformity {:mvn/version "0.5.4"}
+  ;; com.cognitect/aws-api {:mvn/version "0.8.631"} 
+  com.cognitect.aws/api       {:mvn/version "0.8.710-beta01"}
+  com.cognitect.aws/endpoints {:mvn/version "1.1.12.772"}
+    ;; com.cognitect.aws/s3        {:mvn/version "869.2.1687.0"}
+  com.cognitect.aws/dynamodb  {:mvn/version "847.2.1365.0"}
+  }
  :mvn/repos
  {"central"   {:url "https://repo1.maven.org/maven2/"}}
  :aliases

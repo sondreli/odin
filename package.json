@@ -7,7 +7,8 @@
       "test": "echo \"Error: no test specified\" && exit 1",
       "tw": "npx tailwindcss build ./src/client/tw/style.css -o ./public/css/main.css",
       "watch": "shadow-cljs watch app",
-      "watch:css": "onchange '.src/client/tw/*css' -- npm run tw"
+      "watch:css": "onchange './src/client/tw/*css' -- npm run tw",
+      "watch:css2": "tailwindcss -i src/css/tailwind.css -o public/css/style.css --watch"
    },
    "repository": {
       "type": "git",
@@ -22,7 +23,7 @@
    "homepage": "https://github.com/zamansky/shadow-cjs-template#readme",
    "devDependencies": {
       "onchange": "^6.1.0",
-      "shadow-cljs": "^2.11.4",
+      "shadow-cljs": "^2.28.12",
       "tailwindcss": "^1.9.6"
    },
    "dependencies": {

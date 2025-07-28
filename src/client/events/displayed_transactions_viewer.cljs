@@ -7,7 +7,7 @@
   (let [tbody (. js/document getElementById "transactions-tbody")
         row (. tbody insertRow (+ index table-index-offset 1))
         new-cell (. row insertCell 0)
-        _ (. new-cell setAttribute "colspan" "3")
+        _ (. new-cell setAttribute "colspan" "6")
         ;; _ (. row addEventListener "click" #(dispatch [:toggle-transaction-row index]))
         text (. js/document createTextNode (.stringify js/JSON (clj->js transaction)))]
     (. new-cell appendChild text)))
@@ -70,11 +70,11 @@
 
 (reg-event-db
  :view-category-period
- (fn [db [_ [filter-path period display-option]]]
+ (fn [db [_ [all-transactions filter-path period display-option]]]
      (println "view-category-period")
    (let []
      (println filter-path period display-option)
-     (utils/apply-update db period filter-path display-option))))
+     (utils/apply-update db all-transactions period filter-path display-option))))
 
 (defn as-filter-in-edit [db category]
   (-> db

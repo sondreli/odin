@@ -20,8 +20,12 @@ server {
         keepalive_timeout 70;
 
         location / {
-                proxy_pass http://localhost:8080;
-                include proxy_params;
+               proxy_pass http://localhost:8080;
+               #include proxy_params;
+               proxy_set_header Host $http_host;
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header X-Forwarded-Proto $scheme;
         }
 }
 ```
@@ -37,6 +41,9 @@ After doing a change to the config, restart the service:
 ```
 sudo systemctl restart nginx
 ```
+
+## nginx on mac
+config files in: /opt/homebrew/etc/nginx/servers/ docroot: /opt/homebrew/var/www
 
 
 * shadow-cjs-template
@@ -66,3 +73,6 @@ In another terminal, recompile Tailwind CSS if it changes:
 ## Database
 Using datomic
 Specify path to database file in ~/.datomic/local.edn 
+
+### create schemas in dynamodb
+clj -X odin.db-schemas2/-main

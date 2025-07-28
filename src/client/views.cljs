@@ -7,9 +7,11 @@
             [common.category-service :as category]
             [goog.string :as gstring]
             [goog.string.format]
+            [goog.object :as g]
             ["d3" :as d3]
-             
-            [client.services.chart-service :as chart]))
+            [client.components.chart-component.views :as chart]
+            [client.components.period-selector-component.views :as period-sel]
+            [client.components.transactions-table-component.views :as t-table]))
 
 ;; (defn period-selector []
 ;;     [:div
@@ -20,48 +22,6 @@
 ;;               :on-change #(dispatch [:set-period-transactions (-> % .-target .-value)])}]]
   ;; )
 
-(defn period-selector []
-  (let [period-selector @(subscribe [:period-selector])
-        transaction-years @(subscribe [:transaction-years])
-        long-view (:long-view period-selector)
-        selected-year (date/year-of-period (:selected-period period-selector))
-        label-fx (if (-> period-selector :time-unit (= :year))
-                   date/localdate-str->year
-                   date/localdate-str->month)]
-    [:div
-     [:div
-      ; each unit sets a new period
-      ; from the period, the long-view can be derived
-      ; long-view could also be described with from, to indices
-      [:input (merge {:type "radio" :id "radio-year-length" :name "select-period-length"
-                      :on-click #(dispatch [:set-time-unit :year])}
-                     (if (-> period-selector :time-unit (= :year))
-                       {:checked true}
-                       {}))]
-      [:label {:for "radio-year-length"} "Year"]
-      [:input (merge {:type "radio" :id "radio-month-length" :name "select-period-length"
-                      :on-click #(dispatch [:set-time-unit :month])}
-                     (if (-> period-selector :time-unit (= :month))
-                       {:checked true}
-                       {}))]
-      [:label {:for "radio-month-length"} "Month"]
-      ]
-     (when (-> period-selector :time-unit (= :month))
-       [:div
-        ; should update the period-selector with new long-view
-        ; new period can be derived from current period and new year
-        ; new period -> new long view
-        ; current period -> select new year -> find new period -> call navigate -> period selector is updated
-        ; -> and long view is updated -> which triggers the view -> which will update the select and long-view
-        [:select {:on-change #(dispatch [:set-period-year (-> % .-target .-value)])}
-         (for [[index year] (map-indexed vector transaction-years)]
-           [:option {:key index :selected (when (= year selected-year) "selected")} year])]])
-     [:div
-      (for [period long-view]
-       [:span {:on-click #(dispatch [:navigate [period nil nil]])
-               :style {:background-color (if (= period (:selected-period period-selector)) "#88f" "#fff")}}
-        (str (label-fx (:start period)) " ")])]
-     ]))
 
 (defn filter-path []
   (let [html-path (->> @(subscribe [:filter-path])
@@ -110,7 +70,7 @@
   (-> elm  .-target (. closest ".row") .-attributes .-value .-value))
 
 (defn category-row [index category]
-  (println "edit-category-row: " category)
+  ;; (println "edit-category-row: " category)
   [
    [:tr {:value (:id category) :key (:name category) :class "row"} 
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
@@ -120,16 +80,17 @@
                                           (-> category :amount (* 100) Math/round (/ 100)))]
     [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
           "View"]]
-    [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
-          "Edit"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
           "Del"]]]
    ]
   )
 
 (defn edit-category-row [index category builder-category ready-to-store?]
-  (println "edit-category-row edit: " category)
-  [[:tr {:value (:id category) :key (:name category) :class "row"}
+  ;; (println "edit-category-row edit: " category)
+  ;; (println "builder-category: " (-> builder-category :marker))
+  ;; (println "builder-category: " (-> builder-category :marker (g/get "value")))
+  ;; (println "builder-category: " (-> builder-category type))
+  [[:tr {:value (:id category) :key "edit-category-row" :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Lukk"]]
     [:td {:bgcolor (:color category)}
@@ -140,8 +101,6 @@
                                           (-> category :amount (* 100) Math/round (/ 100)))]
     [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
           "View"]]
-    [:td [:a {:on-click #(dispatch [:edit-category (get-value-of-parent-row %)])}
-          "Edit"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
           "Del"]]]
    [:tr {:key (str (:id category) "2")}
@@ -187,20 +146,6 @@
      [:h2 "Loading status:"]
      [:h2 loading]]))
 
-(defn add-color [props transaction category-map]
-  (if (and
-       (contains? transaction :category-id)
-       (contains? (:category transaction) :color))
-    (if (contains? (:category transaction) :conflicting-color)
-      (assoc props :bgcolor "#f44")
-      (assoc props :bgcolor (-> transaction :category :color)))
-    props))
-
-(defn add-color2 [props transaction category-map]
-  (if (contains? transaction :category-id)
-    (assoc props :bgcolor (->> transaction :category-id (get category-map) :color))
-    props))
-
 (defn menu-angle []
   [:svg {:class "w-3 h-3 ms-3 ml-1" :aria-hidden "true" :xmlns "http://www.w3.org/2000/svg" :fill "none" :viewBox "0 0 10 6"}
    [:path {:stroke "currentColor" :stroke-linecap "round" :stroke-linejoin "round" :stroke-width "2" :d "m1 1 4 4 4-4"}]])
@@ -239,41 +184,6 @@
        [:li (menu-item (:name category) :as-filter transaction-desc)])]]
    ])
 
-(defn transactions-table [transactions categories]
-  (let [builder-category @(subscribe [:builder-category])
-        indexed-transactions (map-indexed vector transactions)
-        category-map (into {} (map (juxt :id #(identity %)) categories))]
-    [:table
-     [:tbody {:id "transactions-tbody"}
-      (for [[index transaction] indexed-transactions]
-       [:tr (-> {:key index}
-                (add-color2 transaction category-map))
-        [:td {:on-click #(dispatch [:toggle-transaction-row index])} "Insp"]
-        [:td {:align "right" :style {:padding-right "1em"}}
-         (->> transaction :amount (gstring/format "%.2f"))]
-        [:td {:align "right" :style {:padding-right "1em"}}
-         (-> transaction :date (date/unixtime->prettydate))]
-        [:td (:description transaction)]
-        (if (-> transaction :category-id some?)
-          [:td {:on-click #(dispatch [:view-transaction-match transaction])} "View"]
-          [:td ""])
-        (if (-> transaction :category-id nil?)
-          [:div {:id "multi-dropdown"
-                 :class "dropdown inline-block relative"
-                ;;  :class "z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow w-44 dark:bg-gray-700"
-                 }
-           [:button ;.bg-gray-300.text-gray-700.font-semibold.py-0.px-4.inline-flex.items-center.text-sm
-            {:type "button" :data-dropdown-toggle "multi-dropdown"
-             :class "text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-3 py-2.5 text-center inline-flex items-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800"}
-            "Legg til " (menu-angle)]
-            (if (nil? builder-category)
-              (add-category-menu categories (:description transaction))
-              (add-category-menu-edit (:description transaction)))
-           ]
-          [:td ""])
-        ]
-               )]]))
-
 (defn diplayed-transactions-toggle-view []
   [:button {:on-click #(dispatch [:toggle-chart])} "Toggle bar-chart"])
 
@@ -286,11 +196,12 @@
         categories @(subscribe [:categories])
         period @(subscribe [:period])
         display-option (:display-option displayed-transactions-data)
-        displayed-transactions (:displayed-transactions displayed-transactions-data)]
-    ;; (println "displayed-transactions-viewer 10 transactions: " (take 10 displayed-transactions))
+        displayed-transactions (:displayed-transactions displayed-transactions-data)
+        chart-size (:chart-size displayed-transactions-data)]
+    ;; (println "displayed-transactions-viewer 2 transactions: " (take 2 displayed-transactions))
     (case display-option
-      :table (transactions-table displayed-transactions categories)
-      :bar-chart (chart/draw-stacked-barchart displayed-transactions categories period))
+      :table (t-table/transactions-table displayed-transactions-data categories)
+      :bar-chart (chart/stacked-barchart displayed-transactions categories period chart-size))
     ))
 
 (defn test-color [hue]
@@ -313,16 +224,15 @@
 
 (defn odin-app []
   [:div
-  ;;  (map #(test-color %) (color/generate-hues 15))
-  (test-route)
+   ;;  (map #(test-color %) (color/generate-hues 15))
+   (test-route)
    (loading-label)
    (categories)
-   (period-selector)
-  ;;  (test-chart)
+   (period-sel/period-selector)
+   ;;  (test-chart)
    (request-it-button)
    (search-bar)
    (filter-path)
-  ;;  (transactions-table)
+   ;;  (transactions-table)
    (diplayed-transactions-toggle-view)
-   [:div {:id "mychart"}]
    (displayed-transactions-viewer)])

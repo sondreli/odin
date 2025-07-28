@@ -25,7 +25,7 @@
     (= category "ukategorisert-out") (filter-ukategorsert neg? transactions)
     :else (filter #(->> % :category-id (get category-map) :name (= category)) transactions)))
 
-(defn apply-filter-path [filter-path category-map transactions]
+(defn apply-filter-path [transactions filter-path category-map]
   (case (count filter-path)
     0 transactions
     1 (into [] (filter-category transactions (first filter-path) category-map))
@@ -52,6 +52,8 @@
                                   {:id "ukategorisert-out" :name "ukategorisert-out"})
         amount-map (into {} (map #(vector (:id %) {:amount 0}) extended-categories))
         summed-amount-map (reduce add-amount-to-amount-map amount-map transactions)
+  ;; _ (println "sum-categories: " extended-categories)
+  ;; _ (println summed-amount-map)
         summed-categories (->> extended-categories ;(conj categories {:id "ukategorisert" :name "ukategorisert"})
                                (map #(assoc % :amount (-> summed-amount-map (get (:id %)) :amount)))
                                (sort-by :amount))
@@ -79,18 +81,33 @@
                            (-> db :builder-category))
         category-map (into {} (map (juxt :id #(identity %)) (:categories db)))]
     
-    {:displayed-transactions (->> period-transactions
+    {:displayed-transactions (-> period-transactions
                                   (apply-filter-path filter-path category-map)
-                                  (category/mark-transactions builder-category))
+                                  ;; (category/mark-transactions builder-category)
+                                  (category/add-category2 builder-category)
+                                  :updated-seq
+                                  )
      :display-option :table}))
+
+(defn sort-transactions [transactions displayed-transactions-data]
+  (let [sort-column (:sort-column displayed-transactions-data)
+        sort-order (:sort-order displayed-transactions-data)]
+    (cond->> transactions
+      (some? sort-column) (sort-by sort-column)
+      (and (some? sort-column) (= sort-order :reverse)) reverse
+      :else (into []))))
 
 (defn apply-category [db new-filter-path]
   (let [filter-path (if (some? new-filter-path) new-filter-path (:filter-path db))
         category-map (into {} (map (juxt :id #(identity %)) (:categories db)))
-        displayed-transactions (->> (db :period-transactions)
+        displayed-transactions (-> (:period-transactions db)
                                     (apply-filter-path filter-path category-map)
-                                    (category/mark-transactions (db :builder-category)))]
-    (println "apply-category: " filter-path)
+                                    ;; (category/mark-transactions (db :builder-category))
+                                    (category/add-category2 (:builder-category db))
+                                    :updated-seq
+                                    (sort-transactions (:displayed-transactions-data db))
+                                    )
+  ]
     (-> db
         (assoc :filter-path filter-path)
         (assoc-in [:displayed-transactions-data :displayed-transactions] displayed-transactions))))
@@ -104,14 +121,16 @@
 ;;     (date/last-year-period)))
 
 (defn apply-period [db period-selector period]
-    (println "apply-period")
   (let [period-transactions (->> (date/period-transactions (:all-transactions db) period)
                                  reverse
                                  (into []))
         categories (:categories db)
         summed-categories (sum-categoires categories period-transactions)
         _ (println "apply-period: summed-categories: " summed-categories)
+        _ (println "apply-period: period-transactions: " (take 2 period-transactions))
         displayed-transactions-data (displayed-transactions-data db period-transactions nil nil)
+        _ (println "apply-period: displayed-transactions-data: " (take 2 (-> displayed-transactions-data
+                                                                             :displayed-transactions)))
         ]
     (-> db
          (assoc :period period)
@@ -121,24 +140,42 @@
          (assoc :displayed-transactions-data displayed-transactions-data)
          (assoc :summed-categories summed-categories))))
 
-(defn period-transactions [db period]
-  (->> (date/period-transactions (:all-transactions db) period)
+(defn period-transactions [all-transactions period]
+  (->> (date/period-transactions all-transactions period)
        reverse
        (into [])))
 
 (defn summed-categories [db period-transactions]
   (sum-categoires (:categories db) period-transactions))
 
-(defn apply-period2 [db period]
-  (if (some? period)
-    (let [time-unit (date/time-unit-from-period period)
+(defn period-type->time-unit [period]
+  (let [period-type (:period-type period)]
+    (case period-type
+      :year :year
+      :months :month
+      :month :month
+      nil)))
+
+(defn apply-period2 [db input-all-transactions input-period]
+  (if (or (some? input-period)
+          (some? input-all-transactions))
+    (let [all-transactions (if (some? input-all-transactions) input-all-transactions (:all-transactions db))
+          period (if (some? input-period) input-period (:period db))
+          ;; time-unit (date/time-unit-from-period period)
+          time-unit (period-type->time-unit period)
           long-view (date/long-view-from-period db period time-unit)
-          period-transactions (period-transactions db period)
+          period-transactions (period-transactions all-transactions period)
+          _ (println "apply-period2: " (take 2 period-transactions))
           displayed-transactions (->> period-transactions
-                                      (category/mark-transactions (db :builder-category)))]
+                                      ;; (category/mark-transactions (db :builder-category))
+                                      (category/add-category2 (db :builder-category))
+                                      :updated-seq
+                                      (sort-transactions (:displayed-transactions-data db))
+                                      )]
       (-> db
           (assoc :period period)
           (assoc-in [:period-selector :selected-period] period)
+          (assoc-in [:period-selector :period-type] (-> period :period-type))
           (assoc-in [:period-selector :long-view] long-view)
           (assoc-in [:period-selector :time-unit] time-unit)
           (assoc :period-transactions period-transactions)
@@ -160,10 +197,12 @@
 
 ; period triggers: period, period-selector, period-transactions, displayed-transactions, summed-categories
 ; category triggers: filter-path, displayed-transactions
-(defn apply-update [db period filter-path display-option]
+; should be rewritten to output a data struct for each widget
+; then the widget would only subscripte to that data struct
+(defn apply-update [db all-transactions period filter-path display-option]
   (println "apply-update/display-option: " display-option)
   (println "apply-update/filter-path: " filter-path)
   (-> db
       (apply-display-option display-option)
-      (apply-period2 period)
+      (apply-period2 all-transactions period)
       (apply-category filter-path)))

@@ -1,0 +1,1 @@
+(ns client.components.transactions-table-component.subs)

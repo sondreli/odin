@@ -5,7 +5,8 @@
             [re-frame.core :refer [dispatch]]
             [goog.object :as g]
             [goog.string :as gstring]
-            ))
+            
+            [client.events.utils :as utils]))
 
 (defn sum-category [[category-id transactions]]
   {:category-id category-id
@@ -82,9 +83,10 @@
                                                            (map :category-id)))))
                             ;;  (.value (fn [[_ obj] key] (.log js/console (-> obj (.get key) clj->js (goog.object/get "amount")))))
                             (.value (fn [[_ obj] key] (-> obj (.get key) clj->js (goog.object/get "amount"))))
+                            (.offset (.-stackOffsetDiverging d3))
                             ;;  clj-index (.value (fn [obj key] (-> obj second (goog.object/get key) (goog.object/get "amount"))))
                             )
-                  ;;  (.value (fn [[_ group] key] (.log js/console key) (-> group js->clj (get key) :amount))))
+        ;;  (.value (fn [[_ group] key] (.log js/console key) (-> group js->clj (get key) :amount))))
         ;; series2 (series (d3/index (clj->js data) #(:category-name %) #(:month %)))
         ;; series2 (series (clj->js (make-index datann :category-name :month)))
         d3-index (d3/index data
@@ -100,6 +102,7 @@
     ;;                            (fn [a] (clj->js (:month (js->clj a))))))
     ;; (js->clj (d3/index (into-array data) (fn [a] (:category-name a))))
     ;; (clj->js (make-index data :month :category-name))
+    (.log js/console series)
     series
     ))
 
@@ -129,15 +132,15 @@
                   (.padding 0.1))]
     scale))
 
-(defn y-scale [series]
+(defn y-scale [series height]
   (let [max (d3/max series (fn [d] (d3/max d (fn [d] (get d 1)))))
-        min (d3/min series (fn [d] (d3/min d (fn [d] (get d 1)))))
-        height 500
+        min (d3/min series (fn [d] (d3/min d (fn [d] (get d 0)))))
+        height height
         marginBottom 20
         marginTop 10]
     (-> d3
         .scaleLinear
-        (.domain [0 max])
+        (.domain [min max])
         (.rangeRound [(- height marginBottom) marginTop]))))
 
 (defn make-colors [series color-map]
@@ -166,8 +169,8 @@
 
 (defn make-chart [data series color category-map period]
   (let [x (x-scale data)
-        y (y-scale series)
         height 500
+        y (y-scale series height)
         marginBottom 20
         marginLeft 40
         month-index (make-index data :month)
@@ -180,8 +183,8 @@
                 (.select "#mychart")
                 (.append "svg")
                 (.attr "width" 900)
-                (.attr "height" 600)
-                (.attr "viewBox" (clj->js [0 0 900 600]))
+                (.attr "height" height)
+                (.attr "viewBox" (clj->js [0 0 900 height]))
                 (.attr "style" "max-width: 100%; height: auto;")
                 (.append "g")
                 (.selectAll)
@@ -192,9 +195,10 @@
                 (.data (fn [D] (.map D (fn [d] (g/set d "key" (g/get D "key")) d))))
                 (.join "rect")
                 (.attr "x" (fn [d] (x (first (g/get d "data")))))
-                (.attr "y" (fn [d] (-> d second y)))
+                ;; (.attr "x" (fn [d] (x (g/get (g/get d "data") "group"))))
+                (.attr "y" (fn [d] (y (max (-> d first) (-> d second)))))
                 (.attr "width" (.bandwidth x))
-                (.attr "height" (fn [d] (- (-> d first y) (-> d second y))))
+                (.attr "height" (fn [d] (abs (- (-> d first y) (-> d second y)))))
                 (.on "mouseover" (fn [event d]
                                    (let [key (g/get d "key")
                                          category-name (->> key (get category-map) :name)
@@ -219,9 +223,9 @@
                                              (show-tooltip-label "div.tooltip-barchart" "0")
                                              (dispatch [:navigate [sub-period :table [category]]]))))
                 )
+        ; horizontal axis
         svg2 (-> d3
                  (.select "#mychart svg")
-                 ; horizontal axis
                  (.append "g")
                  (.attr "transform" (str "translate(0," (- height marginBottom) ")"))
                  (.attr "fill" "currentColor")
@@ -230,9 +234,17 @@
                  (.selectAll ".tick")
                  (.data (.domain x))
                  (.on "mouseover" (fn [event d]
-                                    (let [tooltip-text (str d " - " (->> (get month-index d)
-                                                                         (map :amount)
-                                                                         (apply +)))]
+                                    (let [sum-neg-amount (->> (get month-index d)
+                                                              (filter #(-> % :amount pos?))
+                                                              (map :amount)
+                                                              (apply +)
+                                                              (* -1)) 
+                                          sum-pos-amount (->> (get month-index d)
+                                                              (filter #(-> % :amount neg?))
+                                                              (map :amount)
+                                                              (apply +)
+                                                              (* -1))
+                                          tooltip-text (str d "<br/>out: " sum-neg-amount "<br/>In: " sum-pos-amount)]
                                       (show-tooltip-label "div.tooltip-barchart" "1")
                                       (position-tooltip-label "div.tooltip-barchart" event tooltip-text))))
                  (.on "mouseout" (fn [d i] (show-tooltip-label "div.tooltip-barchart" "0")))
@@ -241,6 +253,7 @@
                                               (show-tooltip-label "div.tooltip-barchart" "0")
                                               (dispatch [:navigate [period nil nil]]))))
                  )
+        ; vertical axis
         svg3 (-> d3
                  (.select "#mychart svg")
                  (.append "g")
@@ -261,8 +274,8 @@
     (cond
       (< days 32) :month
       (< days 370) :year
-      (< days 732) :2years
-      :else :5years)))
+      (< days 732) :year
+      :else :year)))
 
 (defn add-uncategorized-ids [transaction]
   (cond
@@ -285,24 +298,28 @@
          (mapcat sum-month)
          (map #(update % :amount (fn [a] (- a)))))))
 
-(defn draw-stacked-barchart [transactions categories period]
+(defn draw-stacked-barchart [transactions categories period chart-size]
+  (println chart-size)
   (let [category-map (into {} (map (juxt :id #(identity %))
                                    (-> categories
                                        (conj {:id "ukategorisert-in" :name "ukategorisert-in"})
-                                       (conj {:id "ukategorisert-out" :name "ukategorisert-out"}))))
-        data (period-transactions->data transactions period)
-        _ (println "draw-stacked-barchart: " data)
+                                       (conj {:id "ukategorisert-out" :name "ukategorisert-out"})))) 
+        chart-transactions (if (= chart-size :full)
+                             transactions
+                             (filter #(-> % :amount neg?) transactions))
+        data (period-transactions->data chart-transactions period)
+        ;; _ (println "draw-stacked-barchart: " data)
         _ (.log js/console data)
         color-map (-> (->> categories
-                              (map #(-> % (select-keys [:id :color]) vals))
-                              (map #(apply hash-map %))
-                              (reduce merge))
+                           (map #(-> % (select-keys [:id :color]) vals))
+                           (map #(apply hash-map %))
+                           (reduce merge))
                       (assoc "ukategorisert-in" "#ddd")
                       (assoc "ukategorisert-out" "#edd"))
-        _ (println "draw-stacked-barchart: color-map " color-map)
+        ;; _ (println "draw-stacked-barchart: color-map " color-map)
         series (make-d3-series data)
-        x (x-scale data)
-        y (y-scale series)
+        ;; x (x-scale data)
+        ;; y (y-scale series 1000)
         color (make-colors series color-map)
         chart (make-chart data series color category-map period)]
     ;;  (println color-map)

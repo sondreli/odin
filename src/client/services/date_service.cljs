@@ -69,7 +69,7 @@
 (defn period-from-year [year]
   (let [start (js/Date. year 0 1)
         end (js/Date. (inc year) 0 1)]
-    {:start start :end end}))
+    {:start start :end end :period-type :year}))
 
 (defn transaction-in-period? [transaction start end]
 ;;   (let [trans-date (-> transaction :classificationInput :date datetime2date js/Date.)
@@ -85,7 +85,8 @@
 
 (defn month-period [month-index year]
   {:start (first-day-of-month month-index year)
-   :end (first-day-of-next-month month-index year)})
+   :end (first-day-of-next-month month-index year)
+   :period-type :month})
 
 (defn last-year-period []
   {:start (one-year-ago)
@@ -138,7 +139,7 @@
         end-month (-> period :end .getMonth)
         end-date (-> period :end .getDate)
         end (js/Date. year end-month end-date)]
-    {:start start :end end}))
+    {:start start :end end :period-type :month}))
 
 (defn get-date-label [unixtime]
   (let [date (-> unixtime js/Date. .getDate)]
@@ -197,9 +198,10 @@
     (re-matches #"[0-9]{2}" label) (day-label->period label period)
     (re-matches #"[0-9]{2}-[a-zA-Z]{3}" label) (month-label->period label)))
 
-(defn period [month-index year]
+(defn period [month-index year period-type]
   {:start (first-day-of-month month-index year)
-   :end (first-day-of-next-month month-index year)})
+   :end (first-day-of-next-month month-index year)
+   :period-type period-type})
 
 ;; have to have short-view length/time-unit, unit position, relative/absolute view and long-view length 
 ;; relative can be when some units in the long-view have not happened
@@ -219,7 +221,7 @@
         (assoc index (inc a))
         (assoc index-last 0))))
 
-(defn long-view [long-view-start long-view-end]
+(defn long-view [long-view-start long-view-end period-type]
   (let [time-unit (case (count long-view-start)
                     1 :year
                     2 :month
@@ -233,11 +235,11 @@
         end (if have-next-parent-unit (dec number-of-units) (last long-view-end))
         indices (->> (range start (inc end))
                      (map #(concat(butlast long-view-start) [%])))
-        periods (map (fn [[year month-index]] (period month-index year)) indices)
+        periods (map (fn [[year month-index]] (period month-index year period-type)) indices)
         ;; periods indices
         ]
     (if have-next-parent-unit
-      (concat periods (long-view (inc-parent-unit long-view-start) long-view-end))
+      (concat periods (long-view (inc-parent-unit long-view-start) long-view-end period-type))
       periods)
     ))
 
@@ -246,13 +248,13 @@
 ;; time-unit is specified by period-array length
 ;; if long-view contains time elements that has not happened, make it relative
 ;; only specify long-view, then short-view will be derived
-(long-view [2024 0] [2025 0])
+(long-view [2024 0] [2025 0] :year)
 
 (defn init-long-view []
   (let [end-year (js/parseInt (current-year))
         month (js/parseInt (current-month))
         start-year (-> end-year (- 1))]
-    (long-view [start-year month] [end-year month])))
+    (long-view [start-year month] [end-year month] :month)))
 
 (defn long-view-years [years]
   (->> years
@@ -261,7 +263,13 @@
 (defn long-view-months [month-period]
   (let [year (year-of-timestamp (:start month-period))
         last-month-of-year (last-month-of-year year)]
-    (long-view [year 0] [year last-month-of-year])))
+    (long-view [year 0] [year last-month-of-year] :month)))
+
+(defn long-view-all-months [years]
+  (let [first-year (-> years first)
+        last-year (-> years last)
+        last-month-of-year (last-month-of-year last-year)]
+    (long-view [first-year 0] [last-year last-month-of-year] :months)))
 
 (defn days-in-period [period]
   (let [time-difference (- (-> period :end .getTime)
@@ -277,7 +285,9 @@
       :else :all-years)))
 
 (defn long-view-from-period [db period time-unit]
-  (case time-unit
+  (case (:period-type period)
     :month (long-view-months period)
+    :months (long-view-all-months (-> db :period-selector :transaction-years))
     :year (long-view-years (-> db :period-selector :transaction-years))
-    :all-years []))
+    :all-years []
+    nil))

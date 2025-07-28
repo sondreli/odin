@@ -15,7 +15,7 @@
          ["display-option/" :display-option] :display
          ["category/" :name] {"" :category
                               ["/period/" :start "/" :end] :category-period}
-         ["period/" :start "/" :end]
+         ["period/" :period-type "/" :start "/" :end]
          {"" :period
           ["/display-option/" :display-option]
           {"" :period-display
@@ -41,14 +41,17 @@
       {:handler :period
        :route-params {:start (date/localdate->unixtime (date/first-day-of-month month-index year))
                       :end (date/localdate->unixtime (date/first-day-of-next-month month-index year))
+                      :period-type :month
                       :display-option :table}}))
 
 (defn route->period [route]
   (let [route-params (-> route :route-params)]
     (if (and (contains? route-params :start)
-             (contains? route-params :end))
+             (contains? route-params :end)
+             (contains? route-params :period-type))
       {:start (-> route-params :start date/unixtime->localdate)
-       :end (-> route-params :end date/unixtime->localdate)}
+       :end (-> route-params :end date/unixtime->localdate)
+       :period-type (-> route-params :period-type keyword)}
       nil)))
 
 (defn route->filter-path [route]
@@ -63,13 +66,13 @@
 (defn dispatch [route-input]
   (let [panel (keyword (str (name (:handler route-input)) "-panel"))
         route (if (-> route-input :handler (= :home)) (init-route) route-input)
-        _ (println "routes/dispatch route: " route)
+        ;; _ (println "routes/dispatch route: " route)
         filter-path (route->filter-path route)
         period (route->period route)
         display-option (-> route :route-params :display-option keyword)]
-    (println "routes/dispatch: " period)
-    (println "routes/dispatch: " filter-path)
-    (re-frame/dispatch [:view-category-period [filter-path period display-option]])
+    ;; (println "routes/dispatch: " period)
+    ;; (println "routes/dispatch: " filter-path)
+    (re-frame/dispatch [:view-category-period [nil filter-path period display-option]])
     ))
 
 (defonce history
@@ -81,8 +84,8 @@
   (pushy/set-token! history (apply url-for handler)))
 
 (defn navigate-to-parameters [period display-option filter-path]
-  (println "navigate-to-parameters/filter-path: " filter-path)
-  (println "navigate-to-parameters/display-option: " display-option)
+  ;; (println "navigate-to-parameters/filter-path: " filter-path)
+  ;; (println "navigate-to-parameters/display-option: " display-option)
   (let [handler-type (case (count filter-path)
                         0 :period-display
                         1 :period-display-category
@@ -93,7 +96,8 @@
                                  2 [:category (first filter-path) :category-filter (second filter-path)])
         handler (-> [handler-type]
                     (concat (when (some? period) [:start (-> period :start date/localdate->unixtime)
-                                                  :end (-> period :end date/localdate->unixtime)]))
+                                                  :end (-> period :end date/localdate->unixtime)
+                                                  :period-type (-> period :period-type name)]))
                     (concat (when (some? display-option) [:display-option display-option]))
                     (concat filter-path-navigation))]
     (navigate! handler)))
@@ -102,7 +106,7 @@
   (if (some? period?) period? (:period db)))
 
 (defn ensure-display-option [db display-option?] 
-  (println "ensure-display-option: " (-> db :displayed-transactions-data :display-option))
+  ;; (println "ensure-display-option: " (-> db :displayed-transactions-data :display-option))
   (if (some? display-option?) display-option? (-> db :displayed-transactions-data :display-option)))
 
 (defn ensure-filter-path [db filter-path?]
@@ -117,7 +121,6 @@
  :navigate
  (fn [{db :db
        [_ [period display-option filter-path]] :event} _]
-   (println period)
    (navigate-to-parameters (ensure-period db period)
                            (ensure-display-option db display-option)
                            (ensure-filter-path db filter-path))))

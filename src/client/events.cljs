@@ -7,7 +7,6 @@
             [client.events.displayed-transactions-viewer]
             [client.events.utils :as utils]
             [client.services.date-service :as date]
-            [client.services.chart-service :as chart]
             [client.services.color-service :as color]
             [re-frame.core :refer [reg-event-db reg-event-fx after dispatch]]
             [clojure.string :as s]
@@ -32,8 +31,7 @@
  :get-categories-response
  (fn
    [db [_ response]]
-   (let [categories (js->clj response)
-         ]
+   (let [categories (js->clj response)]
      (-> db
        (assoc :loading "done")
        (assoc :categories categories)))))
@@ -42,7 +40,7 @@
  :category-stored-in-db-failure
  (fn
    [db [_ response]]
-   (println "store-categories-failure")
+   (println "store-categories-failure" response)
    db))
 
 (reg-event-db
@@ -62,6 +60,13 @@
        (assoc :loading "done") ;; take away that "Loading ..." UI
        (assoc :all-transactions transactions)
        (utils/apply-period updated-period-selector period)))))
+
+(reg-event-db
+ :bad-response
+ (fn
+   [db [_ response]]           ;; destructure the response from the event vector
+   (println "retreiving all transactions failed: " response)
+ db))
 
 (reg-event-db
  :filter-transactions
@@ -106,15 +111,16 @@
  :update-builder-category-color
  (fn
    [db [_ text]]
+   (println "update-builder-category-color: " text)
    (if (is-valid-color? text)
      (let [period-transactions (:period-transactions db)
            builder-category (-> (:builder-category db)
                                 (assoc :color text)
                                 (assoc :color-value text))
-           marked-transactions (category/mark-transactions builder-category period-transactions)]
+           marked-transactions (:updated-seq (category/add-category2 period-transactions builder-category))]
        (-> db
            (assoc :builder-category builder-category)
-           (assoc :displayed-transactions marked-transactions)))
+           (assoc-in [:displayed-transactions-data :displayed-transactions] marked-transactions)))
      (-> db
          (assoc-in [:builder-category :color-value] text)))))
 
@@ -122,22 +128,155 @@
  :mark-transactions
  (fn
    [db [_ text]]
+   (println "mark-transactions: " text)
    (let [transactions (:period-transactions db)
          builder-category (-> (:builder-category db)
                               (assoc :marker (category/update-marker text)))
-         marked-transactions (category/mark-transactions builder-category transactions)
-         ]
+        ;;  marked-transactions (category/mark-transactions builder-category transactions)
+        ;; _ (println "mark-transactions: " builder-category)
+        ;;  marked-transactions (:updated-seq (category/add-category2 transactions builder-category))
+         marked-transactions (category/add-category transactions builder-category)
+        ;;  _ (println "mark-transactions: " (take 3 marked-transactions))]
+   ]
      (-> db
          (assoc :builder-category builder-category)
-         (assoc :displayed-transactions marked-transactions)))
+         (assoc-in [:displayed-transactions-data :displayed-transactions] marked-transactions)
+         ))
+   ))
+
+(reg-event-db
+ :toggle-is-transaction-category-filtered
+ (fn
+   [db [_ is-checked?]]
+   
+   (let [
+        ;;  _ (println "toggle-is-transaction-category-filtered: " is-checked?)
+   ]
+    ;;  (-> db
+    ;;      (assoc-in [:transaction-row-editor :new-sub-filter] sub-filter)
+    ;;      (assoc-in [:transaction-row-editor :is-match?] is-match?))\
+     (-> db
+         (assoc-in [:transaction-row-editor :filter-checked?] is-checked?)))
+   ))
+
+(reg-event-db
+ :mark-transaction
+ (fn
+   [db [_ sub-filter]]
+   
+   (let [row-index (-> db :transaction-row-editor :row-index)
+         description (-> db :displayed-transactions-data :displayed-transactions (get row-index) :description)
+         ;; _ (println "mark-transaction1: " row-index " " description " " sub-filter " displayed-transactions: " (-> db :displayed-transactions-data :displayed-transactions))
+         is-match? (category/match-fun description sub-filter)
+         ;; _ (println "mark-transaction2: " is-match? " " description " " sub-filter " " row-index " displayed-transactions: " (count (-> db :displayed-transactions-data :displayed-transactions)))
+   ]
+     (-> db
+         (assoc-in [:transaction-row-editor :new-sub-filter] sub-filter)
+         (assoc-in [:transaction-row-editor :is-match?] is-match?)))
+   ))
+
+(reg-event-db
+ :select-new-category
+ (fn
+   [db [_ new-category-change]]
+   (println "select-new-category: " new-category-change)
+   (let [
+         ;;  row-index (-> db :transaction-row-editor :row-index)
+         ;;  description (-> db :period-transactions (get row-index) :description)
+         ;;  is-match? (category/match-fun description sub-filter)
+         ;;  _ (println "mark-transaction: " is-match?)
+         transaction-row-editor (:transaction-row-editor db)
+         transaction-row-editor-update (if (< (count new-category-change) 2)
+                                         (assoc transaction-row-editor :new-category nil)
+                                         (assoc transaction-row-editor :new-category new-category-change)) 
+         ]
+     (-> db
+         (assoc :transaction-row-editor transaction-row-editor-update)))
    ))
 
 (defn update-categories [categories builder-category]
   (let [match-index (some (fn [[index category]] (when (= (:id category) (:id builder-category)) index))
                           (map-indexed vector categories))]
+    ;; (println "update-categories: " categories (count categories))
+    ;; (println "update-categories: " (map :name categories))
+    ;; (println "update-categories: " match-index)
+    ;; (println "update-categories: " builder-category)
     (if (some? match-index)
       (assoc categories match-index builder-category)
       (conj categories builder-category))))
+
+(defn update-category [db category]
+  (let [new-sub-filter (-> db :transaction-row-editor :new-sub-filter)
+         updated-category (-> category
+                              (update-in [:marker :description] #(conj % new-sub-filter))
+                              (update-in [:marker :value] #(str % "\n" new-sub-filter)))]
+     {:http-xhrio {:method          :post
+                   :uri             "http://localhost/category"
+                   :params          (clj->js updated-category)
+                   :format          (ajax/json-request-format)
+                   :response-format (ajax/json-response-format {:keywords? true})
+                   :on-success      [:stored-category-response]
+                   :on-failure      [:category-stored-in-db-failure]}
+      :db (-> db
+              (dissoc :transaction-row-editor))}))
+
+(defn mark-one-transaction [db category transaction]
+  (let [updated-transaction (assoc transaction :category-id (:id category))
+        same-transaction? (fn [transaction] (and (= (:date updated-transaction) (:date transaction))
+                                                 (= (:amount updated-transaction) (:amount transaction))
+                                                 (= (:date-index updated-transaction) (:date-index transaction))))
+        updated-all-transactions (map #(if (same-transaction? %) updated-transaction %) (:all-transactions db))
+        ]
+    {:http-xhrio {:method          :post
+                  :uri             "http://localhost/transactions/update"
+                  :params          (clj->js [updated-transaction])
+                  :format          (ajax/json-request-format)
+                  :response-format (ajax/json-response-format {:keywords? true})
+                  :on-success      [:view-category-period [updated-all-transactions nil nil nil]]
+                  :on-failure      [:category-stored-in-db-failure]}
+     :db (-> db
+             (assoc :all-transactions updated-all-transactions)
+             (dissoc :transaction-row-editor))}))
+
+(reg-event-fx
+ :update-transactions-step-one
+ (fn
+   [{db :db} [_ category transaction]]
+   (println "update-transactions-step-one" category)
+   (let[filter-checked? (-> db :transaction-row-editor :filter-checked?)]
+    (if filter-checked?
+      (update-category db category)
+      (mark-one-transaction db category transaction)))
+   ))
+
+;; (reg-event-fx
+;;  :update-transactions
+;;  (fn
+;;    [{db :db} [_ category]]
+;;    (let [all-transactions (:all-transactions db)
+;;          period-transactions (:period-transactions db)
+;;          _ (println "stored-category-response stored-category: " category)
+;;          accumulator (category/add-category2 all-transactions category)
+;;          updated-all-transactions (:updated-seq accumulator)
+;;          updated-period-transactions (:updated-seq (category/add-category2 period-transactions category))
+;;          updated-categories (update-categories (:categories db) category)
+;;          summed-categories (utils/sum-categoires updated-categories updated-period-transactions)
+;;          updated-db (-> db
+;;                         (assoc :categories updated-categories)
+;;                         (assoc :summed-categories summed-categories)
+;;                         (assoc :builder-category nil)
+;;                         (assoc :all-transactions updated-all-transactions)
+;;                         (assoc :period-transactions updated-period-transactions)
+;;                         (assoc-in [:displayed-transactions-data :displayed-transactions] updated-period-transactions)
+;;                         )]
+;;      {:http-xhrio {:method          :post
+;;                    :uri             "http://localhost/transactions/update"
+;;                    :params          (clj->js (:only-full-updates accumulator))
+;;                    :format          (ajax/json-request-format)
+;;                    :response-format (ajax/json-response-format {:keywords? true})
+;;                    :on-success      [:view-category-period [nil nil nil nil]]
+;;                    :on-failure      [:category-stored-in-db-failure]}
+;;       :db db})))
 
 (reg-event-fx
  :store-category3
@@ -167,7 +306,7 @@
          _ (println "stored-category-response stored-category: " stored-category)
          accumulator (category/add-category2 all-transactions stored-category)
          updated-all-transactions (:updated-seq accumulator)
-         updated-period-transactions (category/add-category period-transactions stored-category)
+         updated-period-transactions (:updated-seq (category/add-category2 period-transactions stored-category))
          updated-categories (update-categories (:categories db) stored-category)
          summed-categories (utils/sum-categoires updated-categories updated-period-transactions)
          updated-db (-> db
@@ -181,19 +320,36 @@
      (println "store-categories-success")
      {:http-xhrio {:method          :post
                    :uri             "http://localhost/transactions/update"
-                   :params          (clj->js (:only-updates accumulator))
+                  ;; need only-full-updates
+                  ;;  :params          (clj->js (:only-updates accumulator))
+                   :params          (clj->js (:only-full-updates accumulator))
                    :format          (ajax/json-request-format)
                    :response-format (ajax/json-response-format {:keywords? true})
-                   :on-success      [:view-category-period [nil nil nil]]
+                   :on-success      [:view-category-period [nil nil nil nil]]
                    :on-failure      [:category-stored-in-db-failure]}
       :db updated-db})))
 
-
-(reg-event-db
+(reg-event-fx
  :delete-category
  (fn
-   [db [_ category]]
-   db))
+   [{db :db
+     [_ category-id] :event} _]
+   (let [all-transactions (:all-transactions db)
+         ; delete the category from db.categories also
+         updated-categories (->> db :categories (filter #(not= (:id %) category-id)) (into []))
+         {updated-transactions :updates
+          updated-all-transactions :all} (category/delete-category all-transactions category-id)]
+     db
+     {:http-xhrio {:method          :delete
+                   :uri             (str "http://localhost/category/" category-id)
+                   :params          (clj->js updated-transactions)
+                   :format          (ajax/json-request-format)
+                   :response-format (ajax/json-response-format {:keywords? true})
+                   :on-success      [:view-category-period [updated-all-transactions nil nil nil]]
+                   :on-failure      [:category-stored-in-db-failure]}
+      :db (-> db
+              (assoc :categories updated-categories)
+              (assoc :all-transactions updated-all-transactions))})))
 
 (reg-event-fx
  :view-category
@@ -206,16 +362,6 @@
                        []
                        [category-name])]
      (dispatch [:navigate [nil nil filter-path]]))))
-
-(reg-event-db
- :edit-category
- (fn
-   [db [_ category-name]]
-   (let [edit-category (some #(when (= category-name (:name %)) %) (:categories db))
-         updated-categories (filter #(not= (:name %) category-name) (:categories db))]
-     (-> db
-         (assoc :builder-category edit-category)
-         (assoc :categories updated-categories)))))
 
 ;; (defn add-textarea [tbody index builder-category]
 ;;   (let [row (. tbody insertRow (+ index 1))
@@ -315,6 +461,16 @@
                                       ))]
      (-> db
          (assoc :builder-category new-builder-category)))))
+
+(reg-event-db
+ :edit-transaction-row
+ (fn
+   [db [_ row-index]]
+   (println row-index)
+   (if (and (some? (:transaction-row-editor db))
+            (= row-index (-> db :transaction-row-editor :row-index)))
+     (dissoc db :transaction-row-editor)
+     (assoc db :transaction-row-editor {:row-index row-index}))))
 
 (reg-event-fx
  :request-all-transactions
