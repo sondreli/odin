@@ -142,3 +142,24 @@
 ;;                     {:category-id "mat" :description "megaflis"}]
 ;;       builder-category {:id "mat" :marker {:description ["coop mega"]}}]
 ;;   (add-category2 transactions builder-category))
+
+(defn calculate-filter-statistics [all-transactions filter-text category-id]
+  (when (and (some? filter-text) (not= filter-text "") (some? all-transactions))
+    (let [uncategorized-matches (count (filter #(and (nil? (:category-id %))
+                                                     (some? (:description %))
+                                                     (match-fun (:description %) filter-text))
+                                               all-transactions))
+          categorized-matches (filter #(and (some? (:category-id %))
+                                            (some? (:description %))
+                                            (match-fun (:description %) filter-text))
+                                      all-transactions)
+          same-category-matches (filter #(and (some? (:category-id %))
+                                              (= (:category-id %) category-id)
+                                              (some? (:description %))
+                                              (match-fun (:description %) filter-text))
+                                        all-transactions)]
+                                        (println "category-id: " category-id)
+      {:uncategorized uncategorized-matches
+       :categorized (count categorized-matches)
+       :same-category (count same-category-matches)
+       :filter-text filter-text})))

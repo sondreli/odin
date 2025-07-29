@@ -163,17 +163,16 @@
  :mark-transaction
  (fn
    [db [_ sub-filter]]
-   
    (let [row-index (-> db :transaction-row-editor :row-index)
+         new-category-id (-> db :transaction-row-editor :new-category)
          description (-> db :displayed-transactions-data :displayed-transactions (get row-index) :description)
-         ;; _ (println "mark-transaction1: " row-index " " description " " sub-filter " displayed-transactions: " (-> db :displayed-transactions-data :displayed-transactions))
          is-match? (category/match-fun description sub-filter)
-         ;; _ (println "mark-transaction2: " is-match? " " description " " sub-filter " " row-index " displayed-transactions: " (count (-> db :displayed-transactions-data :displayed-transactions)))
-   ]
+         all-transactions (:all-transactions db)
+         filter-stats (category/calculate-filter-statistics all-transactions sub-filter new-category-id)]
      (-> db
          (assoc-in [:transaction-row-editor :new-sub-filter] sub-filter)
-         (assoc-in [:transaction-row-editor :is-match?] is-match?)))
-   ))
+         (assoc-in [:transaction-row-editor :is-match?] is-match?)
+         (assoc :filter-statistics filter-stats)))))
 
 (reg-event-db
  :select-new-category

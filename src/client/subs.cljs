@@ -1,5 +1,6 @@
 (ns client.subs
-  (:require [re-frame.core :refer [reg-sub]]))
+  (:require [re-frame.core :refer [reg-sub]]
+            [common.category-service :as category]))
 
 (reg-sub
  :loading  ;; usage: (subscribe [:loading])
@@ -55,3 +56,13 @@
  :transaction-row-editor
  (fn [db _]
    (:transaction-row-editor db)))
+
+(reg-sub
+ :all-transactions
+ (fn [db _]
+   (:all-transactions db)))
+
+(reg-sub
+ :filter-statistics
+ (fn [db _]
+   (:filter-statistics db)))
