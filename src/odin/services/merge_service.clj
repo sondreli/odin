@@ -42,12 +42,13 @@
   "discard the transaction if we have one on the same date"
   [lookup-map transaction]
   (let [amount (-> transaction :amount double)
+        _ (println "check-same-date: " (get lookup-map amount))
         match (->> (get lookup-map amount)
                    (filter #(-> transaction :date date/unixtime->localtime
                                 (.isEqual (-> % :date date/unixtime->localtime))))
                    (map #(assoc % :levenshtein (-> % :description (fuzzy/levenshtein (:description transaction)))))
                    (sort-by :levenshtein)
-                  ;;  (filter #(< (:levenshtein %) 10)) ; should compare the levenshtein in relation to the longest desc agains a threshold
+                   ;;  (filter #(< (:levenshtein %) 10)) ; should compare the levenshtein in relation to the longest desc agains a threshold
                    first)]
     ;; (println "check-same-date match: " match)
     ;; (when (and (some? match) (-> match :levenshtein (> 0)))
@@ -61,8 +62,7 @@
       (some? match)
       [:discard (remove-match lookup-map amount match)]
       :else
-      [:next lookup-map])
-    ))
+      [:next lookup-map])))
 
 (defn days-between [trans1 trans2]
   (let [time1 (-> trans1 :date date/unixtime->localtime)

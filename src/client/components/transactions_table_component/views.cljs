@@ -27,8 +27,8 @@
 
 (defn add-disabled [props expr?]
   (if expr?
-    props
-    (assoc props :disabled "disabled")))
+    (assoc props :disabled "disabled")
+    props))
 
 (defn build-category-select [current-category category-map]
   (let [categories-select (->> (assoc  category-map " " {:name " "})
@@ -57,17 +57,55 @@
     (assoc props :bgcolor (->> transaction :category-id (get category-map) :color))
     props))
 
-(defn filter-statistics-component []
-  (let [stats @(subscribe [:filter-statistics])]
-    (println "filter-statistics-component: " stats)
+(defn filter-statistics-component [stats show-categorized? show-uncategorized?]
+  (let [_ (println "filter-statistics-component render - stats:" (some? stats) " show-categorized?:" show-categorized? " show-uncategorized?:" show-uncategorized?)]
     (when stats
       [:tr {:key "filter-stats"}
        [:td {:col-span 5 :style {:padding "8px" :background-color "#f8f9fa" :font-size "12px" :border-top "2px solid #dee2e6"}}
         [:div {:style {:display "flex" :gap "20px" :justify-content "center" :align-items "center"}}
          [:span {:style {:font-weight "bold" :color "#495057"}} "Filter Statistics:"]
-         [:span {:style {:color "#28a745"}} (str "New matches: " (:uncategorized stats))]
-         [:span {:style {:color "#007bff"}} (str "Matced already categorized: " (:categorized stats))]
-         [:span {:style {:color "#6f42c1"}} (str "Matched same category: " (:same-category stats))]]]])))
+         [:span {:style {:color "#28a745" :cursor "pointer" :text-decoration "underline"}
+                 :on-click #(dispatch [:toggle-uncategorized-transactions])}
+          (str "Uncategorized: " (:uncategorized stats))]
+         [:span {:style {:color "#007bff" :cursor "pointer" :text-decoration "underline"}
+                 :on-click #(dispatch [:toggle-categorized-transactions])}
+          (str "Categorized: " (:categorized stats))]]
+        ;; Show uncategorized transactions list
+        (when (and show-uncategorized? (> (:uncategorized stats) 0))
+          [:div {:style {:margin-top "10px" :padding "10px" :background-color "white" :border "1px solid #dee2e6"}}
+           [:h4 {:style {:margin "0 0 10px 0" :color "#28a745"}} "Uncategorized Transactions:"]
+           [:table {:style {:width "100%" :font-size "11px"}}
+            [:thead
+             [:tr
+              [:th {:style {:text-align "right" :padding "2px 5px"}} "Amount"]
+              [:th {:style {:text-align "left" :padding "2px 5px"}} "Date"]
+              [:th {:style {:text-align "left" :padding "2px 5px"}} "Description"]]]
+            [:tbody
+             (for [[idx transaction] (map-indexed #(vector %1 %2) (:uncategorized-transactions stats))]
+               [:tr {:key idx}
+                [:td {:style {:text-align "right" :padding "2px 5px"}}
+                 (gstring/format "%.2f" (:amount transaction))]
+                [:td {:style {:padding "2px 5px"}}
+                 (date/unixtime->prettydate (:date transaction))]
+                [:td {:style {:padding "2px 5px"}} (:description transaction)]])]]])
+        ;; Show categorized transactions list
+        (when (and show-categorized? (> (:categorized stats) 0))
+          [:div {:style {:margin-top "10px" :padding "10px" :background-color "white" :border "1px solid #dee2e6"}}
+           [:h4 {:style {:margin "0 0 10px 0" :color "#007bff"}} "Categorized Transactions:"]
+           [:table {:style {:width "100%" :font-size "11px"}}
+            [:thead
+             [:tr
+              [:th {:style {:text-align "right" :padding "2px 5px"}} "Amount"]
+              [:th {:style {:text-align "left" :padding "2px 5px"}} "Date"]
+              [:th {:style {:text-align "left" :padding "2px 5px"}} "Description"]]]
+            [:tbody
+             (for [[idx transaction] (map-indexed #(vector %1 %2) (:categorized-transactions stats))]
+               [:tr {:key idx}
+                [:td {:style {:text-align "right" :padding "2px 5px"}}
+                 (gstring/format "%.2f" (:amount transaction))]
+                [:td {:style {:padding "2px 5px"}}
+                 (date/unixtime->prettydate (:date transaction))]
+                [:td {:style {:padding "2px 5px"}} (:description transaction)]])]]])]])))
 
 (defn build-transaction-row-editor [transaction transaction-row-editor category-map]
   (let [category-id (:category-id transaction)
@@ -94,11 +132,18 @@
         checkbox-html (let [init {:type "checkbox" :on-click #(dispatch [:toggle-is-transaction-category-filtered (-> % .-target .-checked)])}
                             handle-category #(if (some? category) % (assoc % :disabled true))
                             handle-checked #(if checked? (assoc % :checked true) (assoc % :checked false))]
-                           (-> init handle-category handle-checked))]
-    [[:tr
+                           (-> init handle-category handle-checked))
+        filter-stats (:filter-statistics transaction-row-editor)
+        show-categorized? (:show-categorized-transactions? transaction-row-editor)
+        show-uncategorized? (:show-uncategorized-transactions? transaction-row-editor)
+        has-categorized-matches? (and (some? filter-stats) (> (:categorized filter-stats) 0))
+        store-button-disabled? has-categorized-matches?]
+    [[:tr {:key "transaction-row-editor"}
       [:td [:button (-> {:class "buttom-class"
+                         :style {:opacity (if store-button-disabled? "0.5" "1")
+                                 :cursor (if store-button-disabled? "not-allowed" "pointer")}
                          :on-click #(dispatch [:update-transactions-step-one category transaction])}
-                        (add-disabled true)) "Lagre"]]
+                        (add-disabled store-button-disabled?)) "Lagre"]]
       [:td (build-category-select category category-map)]
       [:td [:input checkbox-html] "filter: "]
       [:td [:input filter-input-html]]
@@ -107,7 +152,7 @@
                "marked by filter"
                "marked manually")
              "")]]
-     (filter-statistics-component) ;; always show stats row (it will only render if stats exist)
+     (filter-statistics-component filter-stats show-categorized? show-uncategorized?) ;; always show stats row (it will only render if stats exist)
     ]))
 
 (defn transaction-row [index transaction builder-category transaction-row-editor category-map]
@@ -167,6 +212,8 @@
   )
   (let [builder-category @(subscribe [:builder-category])
         transaction-row-editor @(subscribe [:transaction-row-editor])
+        ;; show-categorized? (-> transaction-row-editor :show-categorized-transactions?)
+        ;; show-uncategorized? (-> transaction-row-editor :show-uncategorized-transactions?)
         transactions (:displayed-transactions displayed-transactions-data)
         sort-column (-> displayed-transactions-data :sort-column)
         sort-order (-> displayed-transactions-data :sort-order)

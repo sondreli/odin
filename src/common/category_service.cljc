@@ -145,21 +145,24 @@
 
 (defn calculate-filter-statistics [all-transactions filter-text category-id]
   (when (and (some? filter-text) (not= filter-text "") (some? all-transactions))
-    (let [uncategorized-matches (count (filter #(and (nil? (:category-id %))
+    (let [uncategorized-matches (filter #(and (nil? (:category-id %))
                                                      (some? (:description %))
                                                      (match-fun (:description %) filter-text))
-                                               all-transactions))
+                                                all-transactions)
           categorized-matches (filter #(and (some? (:category-id %))
-                                            (some? (:description %))
-                                            (match-fun (:description %) filter-text))
-                                      all-transactions)
+                                           (some? (:description %))
+                                           (match-fun (:description %) filter-text))
+                                     all-transactions)
           same-category-matches (filter #(and (some? (:category-id %))
-                                              (= (:category-id %) category-id)
-                                              (some? (:description %))
-                                              (match-fun (:description %) filter-text))
-                                        all-transactions)]
-                                        (println "category-id: " category-id)
-      {:uncategorized uncategorized-matches
+                                             (= (:category-id %) category-id)
+                                             (some? (:description %))
+                                             (match-fun (:description %) filter-text))
+                                       all-transactions)]
+      (println "category-id: " category-id)
+      {:uncategorized (count uncategorized-matches)
+       :uncategorized-transactions uncategorized-matches
        :categorized (count categorized-matches)
+       :categorized-transactions categorized-matches
        :same-category (count same-category-matches)
+       :same-category-transactions same-category-matches
        :filter-text filter-text})))

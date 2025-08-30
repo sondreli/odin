@@ -12,9 +12,11 @@
          new-displayed-transactions (if (= new-sort-order :reverse)
                                       (->> db :displayed-transactions-data :displayed-transactions
                                            (sort-by column)
-                                           reverse)
+                                           reverse
+                                           (into []))
                                       (->> db :displayed-transactions-data :displayed-transactions
-                                           (sort-by column)))
+                                           (sort-by column)
+                                           (into [])))
          ]
      (-> db
          (assoc-in [:displayed-transactions-data :sort-column] column)

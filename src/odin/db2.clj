@@ -84,7 +84,7 @@
   (let [
         request {:RequestItems {table-name
                                 (mapv (fn [item] {:PutRequest {:Item item}}) items)}} 
-        ;; _ (println (json/write-str request))
+        _ (println (json/write-str request))
         response (aws/invoke dynamodb-client {:op :BatchWriteItem :request request})]
     response))
 
@@ -102,7 +102,7 @@
       ;; (println "Batch Write Result:" result)
       (if (contains? result :UnprocessedItems)
         (println "Warning: Some items were not processed:" (:UnprocessedItems result))
-        (println "All items processed successfully"))))
+        (println "All items written successfully"))))
   
 (defn store-items [table-name items]
   (let [item-groups (partition 25 25 nil items)]
@@ -125,7 +125,7 @@
   (map #(item->db-item transaction-config %) transactions))
 
 (defn store-transactions [transactions]
-  ;; (println "store-transactions " transactions)
+  (println "store-transactions " (count transactions))
   (let [db-transactions (transactions->db-transactions transactions)
         ;; _ (println "db-transactions: " db-transactions)
         ;db-transaction-groups (partition 25 25 nil db-transactions)

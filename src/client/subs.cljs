@@ -66,3 +66,17 @@
  :filter-statistics
  (fn [db _]
    (:filter-statistics db)))
+
+(reg-sub
+ :show-categorized-transactions?
+ (fn [db _]
+   (let [result (:show-categorized-transactions? db)]
+     (println "show-categorized-transactions? subscription called, result:" result)
+     result)))
+
+(reg-sub
+ :show-uncategorized-transactions?
+ (fn [db _]
+   (let [result (:show-uncategorized-transactions? db)]
+     (println "show-uncategorized-transactions? subscription called, result:" result)
+     result)))

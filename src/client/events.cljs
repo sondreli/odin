@@ -154,10 +154,20 @@
    ]
     ;;  (-> db
     ;;      (assoc-in [:transaction-row-editor :new-sub-filter] sub-filter)
-    ;;      (assoc-in [:transaction-row-editor :is-match?] is-match?))\
+    ;;      (assoc-in [:transaction-row-editor :is-match?] is-match?)\
      (-> db
          (assoc-in [:transaction-row-editor :filter-checked?] is-checked?)))
    ))
+
+(reg-event-db
+ :toggle-categorized-transactions
+ (fn [db _]
+   (update-in db [:transaction-row-editor :show-categorized-transactions?] not)))
+
+(reg-event-db
+ :toggle-uncategorized-transactions
+ (fn [db _]
+   (update-in db [:transaction-row-editor :show-uncategorized-transactions?] not)))
 
 (reg-event-db
  :mark-transaction
@@ -172,7 +182,7 @@
      (-> db
          (assoc-in [:transaction-row-editor :new-sub-filter] sub-filter)
          (assoc-in [:transaction-row-editor :is-match?] is-match?)
-         (assoc :filter-statistics filter-stats)))))
+         (assoc-in [:transaction-row-editor :filter-statistics] filter-stats)))))
 
 (reg-event-db
  :select-new-category

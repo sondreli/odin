@@ -54,6 +54,19 @@
         transactions (-> http-response extract-body read-json extract-transactions)]
     transactions))
 
+(defn retrieve-bank-transactions-from-to [from-date to-date {token :access_token} account_key]
+  (let [from-date-str (-> from-date .toLocalDate str)
+        to-date-str (-> to-date .toLocalDate str)
+        http-response (client/get "https://api.sparebank1.no/personal/banking/transactions"
+                                  {;:accept "application/vnd.sparebank1.v1+json; charset=utf-8"
+                                   :query-params {"accountKey" account_key
+                                                  "fromDate" from-date-str
+                                                  "toDate" to-date-str}
+                                   :headers {:authorization (str "Bearer " token)
+                                             :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
+        transactions (-> http-response extract-body read-json extract-transactions)]
+    transactions))
+
 (defn retrieve_accounts [{token :access_token}]
   ;;(client/get "https://api.sparebank1.no/personal/banking/accounts?includeNokAccounts=true&includeCurrencyAccounts=true"
   (client/get "https://api.sparebank1.no/personal/banking/accounts/default"
@@ -90,8 +103,9 @@
   (.isEqual start-date trans-date))
 
 (defn transactions-from [transactions date]
+  (println "transactions-from: "  date " " (count transactions))
   (let [isOnOrAfter (fn [date-a date-b] (or (.isAfter date-a date-b)
-                                             (.isEqual date-a date-b)))]
+                                            (.isEqual date-a date-b)))]
     (filter #(-> % :date date/unixtime->localtime (isOnOrAfter date)) transactions)))
 
 (defn replace-nil-description [transaction]
@@ -108,39 +122,39 @@
           start-date (-> last-date-in-db (date/subtract-days days-back))]
       start-date)))
 
-(defn append-new-transactions2 [transactions-in-db token account-key]
-  (let [days-back 14
-        last-date-in-db (-> transactions-in-db last :date date/unixtime->localtime)
-        start-date (-> last-date-in-db (date/subtract-days days-back))
-        latest-transactions-in-db (transactions-from transactions-in-db start-date)
-        _ (println "latest-transactions-in-db: " (count latest-transactions-in-db))
-        latest-transactions-from-bank (retrieve-bank-transactions-from start-date token account-key)
-        [replace-transactions
-         new-transactions] (merge/process-transactions-from-bank latest-transactions-in-db
-                                                                 latest-transactions-from-bank)
-        categories (db/get-categories)
-        categorized-new-transactions (->> new-transactions
-                                          (category/add-categories categories)
-                                          (map replace-nil-description))
-        categorized-replace-transactions (->> replace-transactions
-                                              (category/add-categories categories)
-                                              (map replace-nil-description))]
-    (println "append-new-transactions2: " (count transactions-in-db) (count new-transactions))
-    ;; (println "categorized-replace-transactions: " categorized-replace-transactions)
-    (println "append-new-transactions2: have category " (filter #(-> % :category-id some?) transactions-in-db))
-    ; find the old one, already have it in retrieved from db
-    ; move it's category over to new transaction
-    ; create the :amount and :description keys
-    ; now you can delete the old entry
-    ; and add the new one
-    ; and return the new transactions as part of all transactions to frontend
-    ;; (db/replace-transactions categorized-replace-transactions) ; store and return with db-id
-    ;; (db/store-transactions2 categorized-new-transactions) ;; should categorize before store and return the trans with db-id
-    (db2/store-transactions categorized-new-transactions) ;; should categorize before store and return the trans with db-id
-    ;(concat transactions-in-db categorized-new-transactions) ; transactions-in-db are outdated after replace-transactions
-    (db2/get-transactions-after "2022-01-01")
-    ;; should sort here
-    ))
+;; (defn append-new-transactions2 [transactions-in-db token account-key]
+;;   (let [days-back 14
+;;         last-date-in-db (-> transactions-in-db last :date date/unixtime->localtime)
+;;         start-date (-> last-date-in-db (date/subtract-days days-back))
+;;         latest-transactions-in-db (transactions-from transactions-in-db start-date)
+;;         _ (println "latest-transactions-in-db: " (count latest-transactions-in-db))
+;;         latest-transactions-from-bank (retrieve-bank-transactions-from start-date token account-key)
+;;         [replace-transactions
+;;          new-transactions] (merge/process-transactions-from-bank latest-transactions-in-db
+;;                                                                  latest-transactions-from-bank)
+;;         categories (db/get-categories)
+;;         categorized-new-transactions (->> new-transactions
+;;                                           (category/add-categories categories)
+;;                                           (map replace-nil-description))
+;;         categorized-replace-transactions (->> replace-transactions
+;;                                               (category/add-categories categories)
+;;                                               (map replace-nil-description))]
+;;     (println "append-new-transactions2: " (count transactions-in-db) (count new-transactions))
+;;     ;; (println "categorized-replace-transactions: " categorized-replace-transactions)
+;;     (println "append-new-transactions2: have category " (filter #(-> % :category-id some?) transactions-in-db))
+;;     ; find the old one, already have it in retrieved from db
+;;     ; move it's category over to new transaction
+;;     ; create the :amount and :description keys
+;;     ; now you can delete the old entry
+;;     ; and add the new one
+;;     ; and return the new transactions as part of all transactions to frontend
+;;     ;; (db/replace-transactions categorized-replace-transactions) ; store and return with db-id
+;;     ;; (db/store-transactions2 categorized-new-transactions) ;; should categorize before store and return the trans with db-id
+;;     (db2/store-transactions categorized-new-transactions) ;; should categorize before store and return the trans with db-id
+;;     ;(concat transactions-in-db categorized-new-transactions) ; transactions-in-db are outdated after replace-transactions
+;;     (db2/get-transactions-after "2022-01-01")
+;;     ;; should sort here
+;;     ))
 
 (defn retrieve-and-store-all-transactions [token account-key]
   (println "retrieve-and-store-all-transactions")
@@ -205,6 +219,15 @@
 (defn print-time [start-time msg] 
   (println "Elapsed time:" (- (System/currentTimeMillis) start-time) "ms " msg))
 
+; when no db-transactions
+; retrieve all from bank
+; else retrieve latest from bank
+
+; retrieve-all-from-bank
+; retrieve each year starting from now and continue backwards until no transactions are found
+; store each year
+; return all transactions
+
 ; retrieve from db
 ; retrieve from bank (from date, from-last-transaction or default first date)
 ; merge (only if some db-transactions)
@@ -212,7 +235,15 @@
 ; return 
 (defn get-transactions2 [token account-key]
   (let [;start-time (System/currentTimeMillis)
-        first-date "2023-12-01" ; "2022-01-01"
+        categories (db2/get-categories)
+        older-transactions (retrieve-bank-transactions-from-to (date/iso-date->local-datetime "2020-01-01") (date/iso-date->local-datetime "2021-01-02") token account-key)
+        _ (println "older-transactions: " (count older-transactions))
+        _ (println "older-transactions: " (take 3 older-transactions))
+        _ (db2/store-transactions (->> older-transactions
+                                       (new->internal-transactions nil)
+                                       (category/add-categories (db2/get-categories))
+                                       (map replace-nil-description)))
+        first-date "2020-01-01"
         db-transactions (db2/get-transactions-after first-date)
         ;_ (print-time start-time "1")
         _ (println "db-transactions2: " (take 10 db-transactions))
@@ -225,7 +256,6 @@
         updated-db-transactions (update-db-transactions latest-db-transactions updates)
         internal-new (new->internal-transactions updated-db-transactions new)
         ; add-categories to internal-new. updated should be recategorized as the description may have changed
-        categories (db2/get-categories)
         _ (println "get-transactions2: categories: " categories)
         categorized-updates-and-new (->> (concat updated-db-transactions internal-new)
                                       (category/add-categories categories)
@@ -253,11 +283,11 @@
         ;; (pp/pprint (take 20 (trans->debug all-transactions)))
     all-transactions-no-source))
 
-(defn get-transactions [token account-key] ; maybe config?
-  (println "get-transactions: " (count (db2/get-transactions-after "2022-01-01")))
-  (if-let [transactions-in-db (not-empty (db2/get-transactions-after "2022-01-01"))]
-    (append-new-transactions2 transactions-in-db token account-key)
-    (retrieve-and-store-all-transactions token account-key)))
+;; (defn get-transactions [token account-key] ; maybe config?
+;;   (println "get-transactions: " (count (db2/get-transactions-after "2022-01-01")))
+;;   (if-let [transactions-in-db (not-empty (db2/get-transactions-after "2022-01-01"))]
+;;     (append-new-transactions2 transactions-in-db token account-key)
+;;     (retrieve-and-store-all-transactions token account-key)))
 
 ;; get-all-transactions
 ;; get all from db
@@ -289,6 +319,7 @@
         body_str (-> accounts :body)
         body (json/read-str body_str :key-fn keyword)
         account_key (:key body)
+        _ (println "account_key: " account_key)
         ;; transactions_response (retrieve_transactions tokens account_key)
         ;; all_transactions (:transactions (json/read-str (:body transactions_response) :key-fn keyword))
         all-transactions (get-transactions2 tokens account_key)
@@ -322,8 +353,8 @@
     (if all-transactions
       {:status 200
        :headers {"Content-Type" "application/json"}
-      ;;  :body (json/write-str all-transactions)
-       :body (json/write-str (take-last 2000 all-transactions))
+       :body (json/write-str all-transactions)
+      ;;  :body (json/write-str (take-last 2000 all-transactions))
        }
       {:status 500
        :headers {"Content-Type" "text/html"}

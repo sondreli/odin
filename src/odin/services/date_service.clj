@@ -58,3 +58,13 @@
       ;; (x-days-ago days-since-last-db-transaction)
       (unixtime->localtime transaction-date)
       (x-days-ago 7))))
+
+(defn iso-date->local-datetime [iso-date]
+  "Convert an ISO date string (e.g., '2024-01-15') to an OffsetDateTime object"
+  (let [zoneIdOslo (java.time.ZoneId/of "Europe/Oslo")
+        datetime (str iso-date "T00:00:00")
+        formatter java.time.format.DateTimeFormatter/ISO_DATE_TIME
+        local-date-time (. java.time.LocalDateTime parse datetime formatter)
+        zoned-datetime (.atZone local-date-time zoneIdOslo)
+        offset-datetime (.toOffsetDateTime zoned-datetime)]
+    offset-datetime))

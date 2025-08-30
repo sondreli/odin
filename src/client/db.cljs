@@ -48,8 +48,11 @@
                          :long-view long-view
                          :selected-period (last long-view)}
        :period {:start (date/first-day-of-month month-index year)
-                :end (date/first-day-of-next-month month-index year)}
+                :end (date/first-day-of-next-month month-index year)
+                :period-type :month}
        :filter-path []
        :open-category-row nil
-       :displayed-transactions-data {:display-option :table}})
+       :displayed-transactions-data {:display-option :table}
+       :show-categorized-transactions? false
+       :show-uncategorized-transactions? false})
   )
