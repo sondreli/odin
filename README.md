@@ -76,3 +76,6 @@ Specify path to database file in ~/.datomic/local.edn
 
 ### create schemas in dynamodb
 clj -X odin.db-schemas2/-main
+
+### start new dynamodb
+docker run -d -v /Users/sondre/dev/odin/dynamodb_local_db:/dynamodb_local_db -p 8000:8000 --name dynamodb-local amazon/dynamodb-local -jar DynamoDBLocal.jar -sharedDb -dbPath /dynamodb_local_db

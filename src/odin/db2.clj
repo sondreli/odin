@@ -47,6 +47,14 @@
                       {:UserId {:S "xxx"}, :Timestamp {:N "1733439600000"}, :Description {:S "RUTERAPPEN"}, :Amount {:N "0"}}
                       {:UserId {:S "xxx"}, :Timestamp {:N "1733439600001"}, :Description {:S "RUTERAPPEN"}, :Amount {:N "0"}}])
 
+(defn pad-left
+  "Pads a string with a character to the specified length."
+  [input-str length pad-char]
+  (let [s (str input-str)
+        fmt (str "%" length "s")  ; e.g., "%16s" for length 16
+        padded (format fmt s)]    ; Pads with spaces
+    (s/replace-first padded #"^ *" (s/join (repeat (- length (count s)) pad-char)))))
+
 ; what am I trying to do? Input all data
 ; nil -> should not be added
 ; required: user-id, date, amount
@@ -84,7 +92,7 @@
   (let [
         request {:RequestItems {table-name
                                 (mapv (fn [item] {:PutRequest {:Item item}}) items)}} 
-        _ (println (json/write-str request))
+        ;; _ (println (json/write-str request))
         response (aws/invoke dynamodb-client {:op :BatchWriteItem :request request})]
     response))
 
@@ -108,10 +116,13 @@
   (let [item-groups (partition 25 25 nil items)]
     (doall (map #(write-items-to-db table-name %) item-groups))))
 
+(defn date->sortkey [date date-index]
+  (str (pad-left date 16 "0") "#" (pad-left date-index 4 "0")))
+
 (defn add-key-val-from [transaction m [key db-key db-type]] ; might be nil, 
   (if-let [value (get transaction key)]
     (let [db-val (cond
-               (= key :date) (str value "#" (:date-index transaction))
+               (= key :date) (date->sortkey value (:date-index transaction))
                :else (str value))
           new-value {db-type db-val}
           ]
@@ -196,8 +207,49 @@
                                              ":sortval" sort-key-value}
                  :ExpressionAttributeNames {"#pk" partition-key-name
                                             "#sk" sort-key-name}}
+        _ (println "query-items-greater-than: " request)
         response (aws/invoke dynamodb-client {:op :Query :request request})]
     (:Items response)))
+
+(defn query-items-greater-than2
+  "Queries DynamoDB with pagination to retrieve all items matching the condition.
+   - table-name: DynamoDB table name.
+   - partition-key-name: Name of the partition key attribute.
+   - sort-key-name: Name of the sort key attribute.
+   - partition-key-value: Value of the partition key.
+   - sort-key-value: Sort key value for the > condition (e.g., timestamp or formatted sort key)."
+  [table-name partition-key-name partition-key-value sort-key-name sort-key-value attributes retrieve-all?]
+  (let [attr-names (into {} (map (fn [attr] [(str "#attr_" attr) attr]) attributes))
+        projection-expr (s/join ", " (keys attr-names))]
+    (loop [items []
+           last-key nil
+           iteration 0]
+      (let [start-time (System/currentTimeMillis)
+            query-params (merge
+                          {:TableName table-name
+                           :KeyConditionExpression "#pk = :partitionval AND #sk > :sortval"
+                           :ExpressionAttributeNames (merge {"#pk" partition-key-name
+                                                             "#sk" sort-key-name}
+                                                            attr-names)
+                           :ExpressionAttributeValues {":partitionval" {:S partition-key-value}
+                                                       ":sortval" {:S sort-key-value}}
+                           :ProjectionExpression projection-expr}
+                          (when last-key
+                            {:ExclusiveStartKey last-key}))
+            ;; _ (println "query-items-greater-than2 query-params: " query-params)
+          ;response (ddb/query query-params)
+            response (aws/invoke dynamodb-client {:op :Query :request query-params})
+            new-items (concat items (:Items response))
+            elapsed-time (- (System/currentTimeMillis) start-time)]
+        (println "Query iteration" iteration "- Retrieved" (count (:Items response)) "items in" elapsed-time "ms")
+        ;; (println "query-items-greater-than2: " response)
+        ;; (when (:LastEvaluatedKey response)
+        ;;   (println "query-items-greater-than2 last-evaluated-key: " (:LastEvaluatedKey response)))
+        (if (and (:LastEvaluatedKey response) retrieve-all?)
+          (recur new-items (:LastEvaluatedKey response) (inc iteration))
+          (do
+            (println "Query completed - Total items:" (count new-items) "in" (inc iteration) "iterations")
+            new-items))))))
 
 (defn translate-key-val [m [key db-key db-type _]]
   (if-let [db-val (get m db-key)]
@@ -226,12 +278,22 @@
 
 ;; (db-transactions->transactions db-transactions)
 
-(defn get-transactions-after [iso-date]
+(defn iso-date->sortkey [iso-date]
+  (-> iso-date
+      (str "T00:00:00")
+      (date/localtime->unixtime)
+      (pad-left 16 "0")
+      (str "#0000")))
+
+(defn get-transactions-after [iso-date retrieve-all?]
   (let [table-name transaction-table-name 
-        db-transactions (query-items-greater-than table-name
-                                           "UserId" {:S "xxx"}
-                                           "Timestamp" {:S (str (date/localtime->unixtime (str iso-date "T00:00:00")) "#0")})
-        transactions (db-transactions->transactions db-transactions)]
+        db-transactions (query-items-greater-than2 table-name
+                                           "UserId" "xxx"
+                                           "Timestamp" (iso-date->sortkey iso-date)
+                                                   ["Timestamp" "Description" "Amount" "CategoryId" "MarkedByFilter"]
+                                                   retrieve-all?)
+        _ (println "db-transactions one: " (first db-transactions))
+        transactions (->> db-transactions (sort-by #(-> % :Timestamp :S)) db-transactions->transactions)]
     transactions))
 
 (defn translate-marker [category]
@@ -248,7 +310,7 @@
         categories (db-categories->categories db-categories)]
     categories))
 
-(get-transactions-after "2024-10-01")
+(get-transactions-after "2024-10-01" false)
 
 ;;
 ;; Delete entry
@@ -274,5 +336,5 @@
         ;; items (list-items table-name)
         ]
     ;; (store-transactions transactions)
-    (println (get-transactions-after "2024-10-01"))
+    (println (get-transactions-after "2024-10-01" false))
     ))

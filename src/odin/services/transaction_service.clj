@@ -116,6 +116,8 @@
       (assoc transaction :description desc))))
 
 (defn last-update-date [first-date transactions days-back]
+  (println "last-update-date last: " (last transactions))
+  (println "last-update-date first: " (first transactions))
   (if (empty? transactions)
     (date/iso-date-str->date first-date)
     (let [last-date-in-db (-> transactions last :date date/unixtime->localtime)
@@ -210,6 +212,26 @@
   (let [last-unixtime (date/date->unixtime last-udpate-date)]
     (filter #(< (:date %) last-unixtime) transactions)))
 
+(defn retrieve-all-transactions-year-by-year
+  "Retrieve all transactions from bank, year by year, starting from now backwards until transactions are found"
+  [token account-key]
+  (loop [current-year (.getYear (java.time.ZonedDateTime/now))
+         transactions []]
+    (println "Retrieving transactions for year:" current-year)
+    (let [from-date (date/iso-date->local-datetime (str current-year "-01-01"))
+          to-date (date/iso-date->local-datetime (str current-year "-12-31"))
+          year-transactions (retrieve-bank-transactions-from-to from-date to-date token account-key)]
+      (println "Retrieved" (count year-transactions) "transactions for year" current-year)
+      (if (and (empty? year-transactions) (< current-year 2015))
+        ;; Stop if we reach 2020 and still no transactions (prevent infinite loop)
+        transactions
+        (if (empty? year-transactions)
+          ;; No transactions for this year, continue to previous year
+          (recur (dec current-year) transactions)
+          ;; Found transactions, add them and continue to previous year
+          (let [all-transactions (concat transactions year-transactions)]
+            (recur (dec current-year) all-transactions)))))))
+
 (defn trans->debug [trans]
   (->> trans
        (map #(select-keys % [:date :date-index :amount]))
@@ -236,52 +258,63 @@
 (defn get-transactions2 [token account-key]
   (let [;start-time (System/currentTimeMillis)
         categories (db2/get-categories)
-        older-transactions (retrieve-bank-transactions-from-to (date/iso-date->local-datetime "2020-01-01") (date/iso-date->local-datetime "2021-01-02") token account-key)
-        _ (println "older-transactions: " (count older-transactions))
-        _ (println "older-transactions: " (take 3 older-transactions))
-        _ (db2/store-transactions (->> older-transactions
-                                       (new->internal-transactions nil)
-                                       (category/add-categories (db2/get-categories))
-                                       (map replace-nil-description)))
-        first-date "2020-01-01"
-        db-transactions (db2/get-transactions-after first-date)
-        ;_ (print-time start-time "1")
-        _ (println "db-transactions2: " (take 10 db-transactions))
-        last-update-date (last-update-date first-date db-transactions 14)
-        latest-db-transactions (transactions-from db-transactions last-update-date)
-        latest-bank-transactions (retrieve-bank-transactions-from last-update-date token account-key)
-        ; date-index is added if match towards db-transaction is found, thus it is only added for updates
-        ; new transactions will have the date-index added as a continium from last update
-        [updates, new] (merge/process-transactions-from-bank latest-db-transactions latest-bank-transactions)
-        updated-db-transactions (update-db-transactions latest-db-transactions updates)
-        internal-new (new->internal-transactions updated-db-transactions new)
-        ; add-categories to internal-new. updated should be recategorized as the description may have changed
-        _ (println "get-transactions2: categories: " categories)
-        categorized-updates-and-new (->> (concat updated-db-transactions internal-new)
-                                      (category/add-categories categories)
-                                      (map replace-nil-description))
-        ;; categorized-updates (->> updated-db-transactions
-        ;;                               (category/add-categories categories)
-        ;;                               (map replace-nil-description))
-        old (old-transactions db-transactions last-update-date)
-        _ (db2/store-transactions categorized-updates-and-new)
-        all-transactions (concat old categorized-updates-and-new)
-        all-transactions-no-source (map #(dissoc % :source) all-transactions)
+        first-date "2015-01-01"
+        db-transactions (db2/get-transactions-after first-date false)
+        ;_ (println "db-transactions2: " (take 10 db-transactions))
         ]
-        (println "Old: " (count old) " updates: " (count updated-db-transactions) " new: " (count internal-new))
-        ;; (println "last 10 from bank: ")
-        ;; (pp/pprint (take 20 (trans->debug latest-bank-transactions)))
-        ;; (println  "last 10 ext updates: ")
-        ;; (pp/pprint (take 10 (trans->debug latest-db-transactions)))
-        ;; (println  "last 10 updates: ")
-        ;; (pp/pprint (take 20 (trans->debug updated-db-transactions)))
-        ;; (println  "last 10 internal-new: ")
-        ;; (pp/pprint (take 20 (trans->debug internal-new)))
-        ;; (println "updates and new: ")
-        ;; (pp/pprint (take 20 (trans->debug categorized-updates-and-new)))
-        ;; (println "all-transactions: ")
-        ;; (pp/pprint (take 20 (trans->debug all-transactions)))
-    all-transactions-no-source))
+
+    ;; Check if database is empty, if so retrieve all transactions year by year
+    (when (empty? db-transactions)
+      (println "No transactions in database, retrieving all transactions from bank...")
+      (let [all-bank-transactions (retrieve-all-transactions-year-by-year token account-key)
+            _ (println "Total retrieved from bank:" (count all-bank-transactions))
+            processed-transactions (->> all-bank-transactions
+                                       (new->internal-transactions nil)
+                                       (category/add-categories categories)
+                                       (map replace-nil-description))
+            _ (db2/store-transactions processed-transactions)]
+        (println "Stored" (count processed-transactions) "transactions in database")))
+
+    ;; Refresh db-transactions after potential initial load
+    (let [db-transactions (db2/get-transactions-after first-date true)
+          _ (println "db-transactions: " (count db-transactions))
+          last-update-date (last-update-date first-date db-transactions 14)
+          latest-db-transactions (transactions-from db-transactions last-update-date)
+          latest-bank-transactions (retrieve-bank-transactions-from last-update-date token account-key)
+          ; date-index is added if match towards db-transaction is found, thus it is only added for updates
+          ; new transactions will have the date-index added as a continium from last update
+          _ (println "latest-db-transactions: " (count latest-db-transactions))
+          _ (println "latest-bank-transactions: " (count latest-bank-transactions))
+          [updates, new] (merge/process-transactions-from-bank latest-db-transactions latest-bank-transactions)
+          updated-db-transactions (update-db-transactions latest-db-transactions updates)
+          internal-new (new->internal-transactions updated-db-transactions new)
+          ; add-categories to internal-new. updated should be recategorized as the description may have changed
+          _ (println "get-transactions2: categories: " categories)
+          categorized-updates-and-new (->> (concat updated-db-transactions internal-new)
+                                        (category/add-categories categories)
+                                        (map replace-nil-description))
+          ;; categorized-updates (->> updated-db-transactions
+          ;;                               (category/add-categories categories)
+          ;;                               (map replace-nil-description))
+          old (old-transactions db-transactions last-update-date)
+          _ (db2/store-transactions categorized-updates-and-new)
+          all-transactions (concat old categorized-updates-and-new)
+          all-transactions-no-source (map #(dissoc % :source) all-transactions)
+          ]
+          (println "Old: " (count old) " updates: " (count updated-db-transactions) " new: " (count internal-new))
+          ;; (println "last 10 from bank: ")
+          ;; (pp/pprint (take 20 (trans->debug latest-bank-transactions)))
+          ;; (println  "last 10 ext updates: ")
+          ;; (pp/pprint (take 10 (trans->debug latest-db-transactions)))
+          ;; (println  "last 10 updates: ")
+          ;; (pp/pprint (take 20 (trans->debug updated-db-transactions)))
+          ;; (println  "last 10 internal-new: ")
+          ;; (pp/pprint (take 20 (trans->debug internal-new)))
+          ;; (println "updates and new: ")
+          ;; (pp/pprint (take 20 (trans->debug categorized-updates-and-new)))
+          ;; (println "all-transactions: ")
+          ;; (pp/pprint (take 20 (trans->debug all-transactions)))
+      all-transactions-no-source)))
 
 ;; (defn get-transactions [token account-key] ; maybe config?
 ;;   (println "get-transactions: " (count (db2/get-transactions-after "2022-01-01")))

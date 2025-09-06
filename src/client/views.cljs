@@ -22,7 +22,6 @@
 ;;               :on-change #(dispatch [:set-period-transactions (-> % .-target .-value)])}]]
   ;; )
 
-
 (defn filter-path []
   (let [html-path (->> @(subscribe [:filter-path])
                        (concat ["All"])
@@ -42,7 +41,7 @@
   []
   [:button {:class "button-class"
             :on-click  #(startup)}
-        "I want it, now!"])
+   "I want it, now!"])
 
 (defn search-bar []
   [:input {:type "text"
@@ -71,8 +70,7 @@
 
 (defn category-row [index category]
   ;; (println "edit-category-row: " category)
-  [
-   [:tr {:value (:id category) :key (:name category) :class "row"} 
+  [[:tr {:value (:id category) :key (:name category) :class "row"}
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Endre"]]
     [:td {:bgcolor (:color category)} (:name category)]
@@ -81,9 +79,7 @@
     [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
           "View"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
-          "Del"]]]
-   ]
-  )
+          "Del"]]]])
 
 (defn edit-category-row [index category builder-category ready-to-store?]
   ;; (println "edit-category-row edit: " category)
@@ -133,12 +129,10 @@
         rows (mapcat identity (concat category-rows [new-category-rows]))]
     (.log js/console rows)
     [:div
-   [:h3 "Categories"]
-   [:table
-    [:tbody {:id "categories-tbody"}
-     rows]
-    ]])
-  )
+     [:h3 "Categories"]
+     [:table
+      [:tbody {:id "categories-tbody"}
+       rows]]]))
 
 (defn loading-label []
   (let [loading @(subscribe [:loading])]
@@ -181,8 +175,7 @@
    [:li.dropdown (submenu "som filter")
     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
      (for [category categories]
-       [:li (menu-item (:name category) :as-filter transaction-desc)])]]
-   ])
+       [:li (menu-item (:name category) :as-filter transaction-desc)])]]])
 
 (defn diplayed-transactions-toggle-view []
   [:button {:on-click #(dispatch [:toggle-chart])} "Toggle bar-chart"])
@@ -201,8 +194,7 @@
     ;; (println "displayed-transactions-viewer 2 transactions: " (take 2 displayed-transactions))
     (case display-option
       :table (t-table/transactions-table displayed-transactions-data categories)
-      :bar-chart (chart/stacked-barchart displayed-transactions categories period chart-size))
-    ))
+      :bar-chart (chart/stacked-barchart displayed-transactions categories period chart-size))))
 
 (defn test-color [hue]
   (let [hsv [hue 0.6 0.9]
@@ -210,17 +202,13 @@
     (println color-str)
     [:p {:style {:background-color color-str}} "hello color"]))
 
-
 (defn test-chart []
   [:div
    [:button {:on-click #(dispatch [:draw-chart])} "make chart"]
-   [:div {:id "mychart"}]]
-  )
+   [:div {:id "mychart"}]])
 
 (defn test-route []
   [:button {:on-click #(dispatch [:navigate :about])} "Navigate"])
-
-
 
 (defn odin-app []
   [:div
