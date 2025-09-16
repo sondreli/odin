@@ -55,3 +55,38 @@ div.tooltip-barchart {
 
 /* Change the background color of the dropdown button when the dropdown content is shown */
 /* .dropdown:hover .dropbtn {background-color: #3e8e41;} */
+
+/* Color selector styling for Choices.js */
+.color-select .choices__item {
+  display: flex !important;
+  align-items: center !important;
+  padding: 4px 8px !important;
+}
+
+.color-select .choices__item[data-color]::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  border-radius: 2px;
+  border: 1px solid #ddd;
+}
+
+/* Set background color for each choice item based on data-color attribute */
+.color-select .choices__item[data-color="#ff0000"]::before { background-color: #ff0000; }
+.color-select .choices__item[data-color="#ff8000"]::before { background-color: #ff8000; }
+.color-select .choices__item[data-color="#ffff00"]::before { background-color: #ffff00; }
+.color-select .choices__item[data-color="#80ff00"]::before { background-color: #80ff00; }
+.color-select .choices__item[data-color="#00ff00"]::before { background-color: #00ff00; }
+.color-select .choices__item[data-color="#00ff80"]::before { background-color: #00ff80; }
+.color-select .choices__item[data-color="#00ffff"]::before { background-color: #00ffff; }
+.color-select .choices__item[data-color="#0080ff"]::before { background-color: #0080ff; }
+.color-select .choices__item[data-color="#0000ff"]::before { background-color: #0000ff; }
+.color-select .choices__item[data-color="#8000ff"]::before { background-color: #8000ff; }
+.color-select .choices__item[data-color="#ff00ff"]::before { background-color: #ff00ff; }
+.color-select .choices__item[data-color="#ff0080"]::before { background-color: #ff0080; }
+.color-select .choices__item[data-color="#800000"]::before { background-color: #800000; }
+.color-select .choices__item[data-color="#808000"]::before { background-color: #808000; }
+.color-select .choices__item[data-color="#008000"]::before { background-color: #008000; }
+.color-select .choices__item[data-color="#008080"]::before { background-color: #008080; }

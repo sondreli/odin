@@ -53,12 +53,25 @@
     (dispatch [:update-builder-category-color color])))
 
 (defn color-selector []
-  [:select {:id "color-selector" :on-change #(-> % .-target .-value set-select-bg)}
-   (for [color (map #(-> [% 0.6 0.9]
+  (let [colors (map #(-> [% 0.6 0.9]
                          color/hsv2rgb
                          color/color-base10->base16
                          color/color-str) (color/generate-hues 16))]
-     [:option {:style {:background-color color}} color])])
+    [:div {:ref (fn [el]
+                  (when el
+                    (let [select-el (.querySelector el "select")
+                          choices (js/Choices. select-el
+                                               (clj->js {:searchEnabled false
+                                                         :itemSelectText ""
+                                                         :shouldSort false
+                                                         :allowHTML false}))]
+                      (set! (.-choicesInstance select-el) choices))))}
+     [:select {:id "color-selector"
+               :class "color-select"
+               :on-change #(-> % .-target .-value set-select-bg)}
+      (for [[idx color] (map-indexed vector colors)]
+        [:option {:value color
+                  :data-color color} color])]]))
 
 (defn add-disabled [props expr?]
   (if expr?

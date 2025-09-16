@@ -380,13 +380,15 @@
         body (json/read-str body_str :key-fn keyword)
         account_key (:key body)
         all-transactions (get-transactions2 tokens account_key)
+        response-body (json/write-str all-transactions)
         ;; _ (println (take 3 all-transactions))
         ]
 
     (if all-transactions
       {:status 200
-       :headers {"Content-Type" "application/json"}
-       :body (json/write-str all-transactions)
+       :headers {"Content-Type" "application/json"
+                 "Content-Length" (-> response-body .getBytes count str)}
+       :body response-body
       ;;  :body (json/write-str (take-last 2000 all-transactions))
        }
       {:status 500

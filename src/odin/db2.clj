@@ -96,21 +96,22 @@
         response (aws/invoke dynamodb-client {:op :BatchWriteItem :request request})]
     response))
 
-;; (defn write-items-to-db [table-name items]
-;;   (try
-;;     (let [result (write-batch-items table-name items)]
-;;       ;; (println "Batch Write Result:" result)
-;;       (if (contains? result :UnprocessedItems)
-;;         (println "Warning: Some items were not processed:" (:UnprocessedItems result))
-;;         (println "All items processed successfully")))
-;;     (catch Exception e
-;;       (println "Failed to write batch items:" (.getMessage e)))))
 (defn write-items-to-db [table-name items]
-    (let [result (write-batch-items table-name items)]
-      ;; (println "Batch Write Result:" result)
-      (if (contains? result :UnprocessedItems)
-        (println "Warning: Some items were not processed:" (:UnprocessedItems result))
-        (println "All items written successfully"))))
+  ;; (println "Items to write:" items)
+  (let [result (write-batch-items table-name items)]
+    (println "Batch Write Result:" result)
+    (if (and (contains? result :cognitect.aws.http/status)
+             (-> result :cognitect.aws.http/status (>= 400)))
+      (do
+        (println "Error writing to DynamoDB:" result)
+        (when (= (:cognitect.anomalies/category result) :cognitect.anomalies/incorrect)
+          (println "ValidationException occurred. Problematic items:" items))
+        result)
+      (do
+        (if (contains? result :UnprocessedItems)
+          (println "Warning: Some items were not processed:" (:UnprocessedItems result))
+          (println "All items written successfully"))
+        result))))
   
 (defn store-items [table-name items]
   (let [item-groups (partition 25 25 nil items)]
@@ -119,30 +120,30 @@
 (defn date->sortkey [date date-index]
   (str (pad-left date 16 "0") "#" (pad-left date-index 4 "0")))
 
-(defn add-key-val-from [transaction m [key db-key db-type]] ; might be nil, 
+(defn add-key-val-from [transaction m [key db-key db-type]] ; might be nil,
   (if-let [value (get transaction key)]
     (let [db-val (cond
                (= key :date) (date->sortkey value (:date-index transaction))
                :else (str value))
-          new-value {db-type db-val}
-          ]
+          new-value {db-type db-val}]
     (assoc m db-key new-value))
     m))
   
 (defn item->db-item [config item]
-  (reduce (partial add-key-val-from item) {} config))
+(let [enriched-item (if (contains? item :user-id) item (assoc item :user-id "xxx"))]
+  (reduce (partial add-key-val-from enriched-item) {} config)))
 
 (defn transactions->db-transactions [transactions]
   (map #(item->db-item transaction-config %) transactions))
 
 (defn store-transactions [transactions]
-  (println "store-transactions " (count transactions))
   (let [db-transactions (transactions->db-transactions transactions)
-        ;; _ (println "db-transactions: " db-transactions)
+        _ (println "Converted to db-transactions count:" (count db-transactions))
+        _ (println "Sample db-transaction:" (first db-transactions))
         ;db-transaction-groups (partition 25 25 nil db-transactions)
         ]
     ;; (doall (map #(write-transactions-to-db transaction-table-name %) db-transaction-groups))
-    (store-items transaction-table-name db-transactions)
+    (let [store-result (store-items transaction-table-name db-transactions)]
     transactions))
 ;;
 ;;  Store category
@@ -257,7 +258,10 @@
                          :S identity
                          :N #(Double. %)
                          identity)
-        value (-> m (get db-key) (get db-type) val-trans-fx)]
+        value (-> m (get db-key) (get db-type) val-trans-fx)
+        _ (when (= key :category-id)
+            (println "=== CATEGORY-ID RETRIEVAL ===")
+            (println "key:" key ", db-key:" db-key ", db-val:" db-val ", value:" value))]
     (-> m
         (dissoc db-key)
         (assoc key value)))
@@ -286,14 +290,21 @@
       (str "#0000")))
 
 (defn get-transactions-after [iso-date retrieve-all?]
-  (let [table-name transaction-table-name 
+  (println "=== get-transactions-after ===")
+  (println "iso-date:" iso-date ", retrieve-all?:" retrieve-all?)
+  (let [table-name transaction-table-name
         db-transactions (query-items-greater-than2 table-name
                                            "UserId" "xxx"
                                            "Timestamp" (iso-date->sortkey iso-date)
                                                    ["Timestamp" "Description" "Amount" "CategoryId" "MarkedByFilter"]
                                                    retrieve-all?)
+        _ (println "Retrieved" (count db-transactions) "db-transactions from DynamoDB")
+        _ (println "Sample db-transaction:" (first db-transactions))
         _ (println "db-transactions one: " (first db-transactions))
-        transactions (->> db-transactions (sort-by #(-> % :Timestamp :S)) db-transactions->transactions)]
+        transactions (->> db-transactions (sort-by #(-> % :Timestamp :S)) db-transactions->transactions)
+        _ (println "Converted to" (count transactions) "Clojure transactions")
+        _ (println "Sample Clojure transaction:" (first transactions))
+        _ (println "=== END get-transactions-after ===")]
     transactions))
 
 (defn translate-marker [category]

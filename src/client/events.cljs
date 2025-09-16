@@ -230,12 +230,16 @@
               (dissoc :transaction-row-editor))}))
 
 (defn mark-one-transaction [db category transaction]
+  (println "=== mark-one-transaction ===")
+  (println "category:" category)
+  (println "original transaction:" transaction)
   (let [updated-transaction (assoc transaction :category-id (:id category))
+        _ (println "updated transaction with category-id:" updated-transaction)
         same-transaction? (fn [transaction] (and (= (:date updated-transaction) (:date transaction))
                                                  (= (:amount updated-transaction) (:amount transaction))
                                                  (= (:date-index updated-transaction) (:date-index transaction))))
         updated-all-transactions (map #(if (same-transaction? %) updated-transaction %) (:all-transactions db))
-        ]
+        _ (println "About to send HTTP request to backend with params:" [updated-transaction])]
     {:http-xhrio {:method          :post
                   :uri             "http://localhost/transactions/update"
                   :params          (clj->js [updated-transaction])
@@ -348,7 +352,6 @@
          updated-categories (->> db :categories (filter #(not= (:id %) category-id)) (into []))
          {updated-transactions :updates
           updated-all-transactions :all} (category/delete-category all-transactions category-id)]
-     db
      {:http-xhrio {:method          :delete
                    :uri             (str "http://localhost/category/" category-id)
                    :params          (clj->js updated-transactions)
