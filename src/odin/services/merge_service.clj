@@ -122,6 +122,12 @@
         (assoc :date (-> partial-transaction :source :date))
         (assoc-attribute [:category-id category-id]))))
 
+; this one need to return replacements
+; {:old {:date :date-index} :new {with all data}}
+; the old transaction then needs 3 actions:
+; 1. remove for memory
+; 2. remove from db
+; 3. add updated version to memory and db
 (defn add-data-to-replacement2 [db-match partial-transaction]
   (-> partial-transaction
         (assoc :amount (-> partial-transaction :source :amount))
@@ -129,6 +135,17 @@
         (assoc :date (-> partial-transaction :source :date))
         (assoc :date-index (:date-index db-match))
         (assoc-attribute [:category-id (-> db-match :category-id)])))
+
+(defn add-data-to-replacement3 [db-match bank-transaction]
+  {:old {:user-id (:user-id bank-transaction) :date (:date bank-transaction) :date-index (:date-index db-match)}
+   :new (-> bank-transaction
+      (assoc :user-id (:user-id bank-transaction))
+      (assoc :amount (-> bank-transaction :source :amount))
+      (assoc :description (-> bank-transaction :source :description))
+      (assoc :date (-> bank-transaction :source :date))
+      (assoc :date-index 0) ; needs to be calculated after join with other transactions
+      (assoc-attribute [:marked-by-filter? (:marked-by-filter? db-match)])
+      (assoc-attribute [:category-id (-> db-match :category-id)]))})
 
 (defn add-data-to-new [[idx new-transaction]]
   (let [trans {:temp-id (str idx)
@@ -150,13 +167,13 @@
         ;; _ (println "lookup-map: " lookup-map)
         ; list of actions matches transactions-from-bank
         actions (map-to-actions lookup-map transactions-from-bank)
-        ;; _ (println (into [] actions))
+        _ (println (into [] actions))
         ;; _ (println transactions-from-bank)
         ;unchanged
         replacements (->> (map vector actions transactions-from-bank)
                           (filter (fn [[{action :action} _]] (= action :replace)))
                           ;(map (fn [[{db-match :db-match} trans]] {:db-id db-id :source trans}))
-                          (map (fn [[{db-match :db-match} trans]] (add-data-to-replacement2 db-match trans)))
+                          (map (fn [[{db-match :db-match} trans]] (add-data-to-replacement3 db-match trans)))
                           ;(map #(add-data-to-replacement transactions-in-db %))
                           )
         new-trans (->> (map vector actions transactions-from-bank)
@@ -167,13 +184,20 @@
                        )]
     [replacements new-trans]))
 
+(defn date->iso [iso-date]
+  (-> iso-date
+      date/iso-date-str->date
+      date/date->unixtime))
+
 (process-transactions-from-bank
- [{:amount 2.0 :date 1703631600000 :db-id 1 :description "cat"}
-  {:amount 3.0 :date 1703631600000 :db-id 2 :description "asdg" :category-id "1234"}
-  {:amount 3.0 :date 1703631600000 :db-id 3 :description "asdf"}
+ ;; db-transactions
+ [{:amount 2.0 :date (date->iso "2025-11-10") :date-index 1 :description "cat"}
+  {:amount 3.0 :date (date->iso "2025-11-10") :date-index 2 :description "asdg" :category-id "1234"}
+  {:amount 3.0 :date (date->iso "2025-11-10") :date-index 3 :description "asdf"}
   ]
- [{:amount 2.0 :date 1703631600000 :description "cat"}
-  {:amount 3.0 :date 1703631600000 :description "asdf"}
-  {:amount 3.0 :date 1703718000000 :description "asdf"}
-  {:amount 5.0 :date 1703718000000 :description "asdf"}
-  {:amount 6.0 :date 1703718000000 :description "asdf"}])
+ ;; bank-transactions
+ [{:amount 2.0 :date (date->iso "2025-11-10") :description "cat" :source {:amount 2.0 :date (date->iso "2025-11-10") :description "cat"}} 
+  {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf"}}
+  {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf"}}
+  {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf"}}
+  {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf"}}])

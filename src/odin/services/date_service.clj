@@ -51,6 +51,11 @@
         x (.minus date days (java.time.temporal.ChronoUnit/DAYS))]
     x))
 
+(defn add-days [date days]
+  (let [;now (java.time.ZonedDateTime/now)
+        x (.plus date days (java.time.temporal.ChronoUnit/DAYS))]
+    x))
+
 (defn find-retrieval-date [transaction-date]
   (let [days-since-last-db-transaction (days-since-transaction transaction-date)]
     ;; (println days-since-last-db-transaction)

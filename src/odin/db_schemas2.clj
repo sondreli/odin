@@ -57,7 +57,8 @@
         category-response (aws/invoke client {:op :CreateTable :request category-schema})
         ]
     (println "Transaction table creation response:" transaction-response)
-    (println "Category table creation response:" category-response)))
+    (println "Category table creation response:" category-response)
+    ))
 
 ;; Example usage
 (defn -main [& args]

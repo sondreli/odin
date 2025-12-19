@@ -6,14 +6,15 @@
             [clojure.java.io :as io]
             [clj-http.client :as client]
             ;; [datomic.client.api :as d]
-            [odin.db :as db]
+            ;; [odin.db :as db]
             [odin.db2 :as db2]
             [common.category-service :as category]
             [odin.services.date-service :as date]
             [odin.services.auth-service :as auth]
             [odin.services.merge-service :as merge]
             [clojure.test :as test :refer [deftest is do-report]]
-            [odin.services.transaction-service :as transaction]))
+            ;[odin.services.transaction-service :as transaction]
+            ))
 
 
 (defn extract-body [http-response]
@@ -158,43 +159,57 @@
 ;;     ;; should sort here
 ;;     ))
 
-(defn retrieve-and-store-all-transactions [token account-key]
-  (println "retrieve-and-store-all-transactions")
-  (let [transactions (retrieve-bank-transactions-from "2022-05-01" token account-key)
-        ;; enriched-transactions (enrich-transactions token transactions)
-        tx-result (db/store-transactions transactions)]
-    transactions))
+;; (defn retrieve-and-store-all-transactions [token account-key]
+;;   (println "retrieve-and-store-all-transactions")
+;;   (let [transactions (retrieve-bank-transactions-from "2022-05-01" token account-key)
+;;         ;; enriched-transactions (enrich-transactions token transactions)
+;;         tx-result (db/store-transactions transactions)]
+;;     transactions))
 
-(defn new->internal-transaction [index new-transaction]
+(defn bank->internal-transaction [new-transaction]
   {:user-id "xxx"
    :amount (-> new-transaction :amount str Double/parseDouble)
    :date (:date new-transaction)
-   :date-index index
+   :date-index 0
    :description (:description new-transaction)
    :source new-transaction})
+
+(defn add-date-index [index transaction]
+  (assoc transaction :date-index index))
 
 (defn index-date-group-transactions [new-transactions-date-group last-index]
   (->> new-transactions-date-group
        (map-indexed (fn [idx group] [(+ idx last-index) group]))
-       (map #(apply new->internal-transaction %))))
+       (map #(apply add-date-index %))))
 
-(defn add-last-index [date-indexes [date date-group]]
+(defn add-last-index [date-indexes [date new-transactions-date-group]]
+  ;(println "add-last-index: " date-indexes " " date " " new-transactions-date-group)
   (if (contains? date-indexes date)
-    [date-group (-> date-indexes (get date) last inc)]
-    [date-group 0]))
+    [new-transactions-date-group (-> date-indexes (get date) last inc)]
+    [new-transactions-date-group 0]))
 
-(defn new->internal-transactions [updated-db-transactions new-transactions]
-  (let [date-indexes (->> updated-db-transactions
+;; is updating date-index, should not convert external to internal data structure
+(defn update-date-index-in-new-transactions [db-transactions new-transactions]
+  (let [date-indexes (->> db-transactions
                           (group-by :date)
                           (map (fn [[a b]] [a (->> b (map :date-index) sort)]))
                           (into {}))
-        add-last-index-fx (partial add-last-index date-indexes)]
-        ;; (println date-indexes)
-    (->> new-transactions
-         (group-by :date)
-         (map add-last-index-fx)
-         (mapcat #(apply index-date-group-transactions %))
-         (sort-by :date))))
+        add-last-index-fx (partial add-last-index date-indexes)
+        updated-new-transactions (->> new-transactions
+                                      (group-by :date)
+                                      (map add-last-index-fx)
+                                      (mapcat #(apply index-date-group-transactions %))
+                                      (into []))]
+        ;; (println "db-transactions: " (take 10 db-transactions))
+        ;; (println "updated-new-transactions: " (take 10 updated-new-transactions))
+    (->> updated-new-transactions
+        (concat db-transactions)
+        (sort-by :date))))
+
+
+
+;; (update-date-index-in-new-transactions [{:date 1762729200000 :date-index 0 :amount 100} {:date 1762729200000 :date-index 1 :amount 200} {:date 1762729300000 :date-index 0 :amount 300}]
+;;                             [{:date 1762729200000 :date-index 0 :amount 100 :description "asdf" :source {:date 1234}}])
 
 (defn update-db-transaction [transaction updates-map]
   (let [key (str (:date transaction) "#" (:date-index transaction))]
@@ -202,11 +217,30 @@
       (merge transaction (get updates-map key))
       transaction)))
 
-(defn update-db-transactions [db-transactions updates]
+(defn update-db-transactions
+  "merge db-transactions with updated verisons from the bank. Match on :date#:date-index string."
+  [db-transactions updates]
   (let [m (->> updates
                (map (fn [u] [(str (:date u) "#" (:date-index u)) u]))
                (into {}))]
     (map #(update-db-transaction % m) db-transactions)))
+
+; transactions have moved date, this implementation does not take that into account
+; 1. add new transactions
+; 2. update date-index
+(defn add-updated-transactions [db-transactions updates]
+  )
+
+(defn transaction->sort-key [transaction]
+  (let [date (:date transaction)
+        date-index (:date-index transaction)]
+    (str date "#" date-index)))
+
+(defn remove-outdated-transactions [db-transactions old-transactions]
+  (let [old-transactions-ids (->> old-transactions
+                                  (map transaction->sort-key)
+                                  (into #{}))]
+    (filter #(not (contains? old-transactions-ids (transaction->sort-key %))) db-transactions)))
 
 (defn old-transactions [transactions last-udpate-date]
   (let [last-unixtime (date/date->unixtime last-udpate-date)]
@@ -234,12 +268,19 @@
 
 (defn trans->debug [trans]
   (->> trans
-       (map #(select-keys % [:date :date-index :amount]))
+       (map #(select-keys % [:date :date-index :amount :category-id]))
        (map #(update % :date date/unixtime->iso-date))
        reverse))
 
 (defn print-time [start-time msg] 
   (println "Elapsed time:" (- (System/currentTimeMillis) start-time) "ms " msg))
+
+(defn split-into-potential-replacements-and-new [latest-db-transactions latest-bank-transactions]
+  (if (empty? latest-db-transactions)
+    [[] latest-bank-transactions]
+    (let [one-week-after-last-date-in-db (-> latest-db-transactions last :date date/unixtime->localtime (date/add-days 21))
+          [potential-replacements new] (partition-by #(-> % :date date/unixtime->localtime (.isAfter one-week-after-last-date-in-db)) latest-bank-transactions)]
+      [potential-replacements new])))
 
 ; when no db-transactions
 ; retrieve all from bank
@@ -269,7 +310,8 @@
       (let [all-bank-transactions (retrieve-all-transactions-year-by-year token account-key)
             _ (println "Total retrieved from bank:" (count all-bank-transactions))
             processed-transactions (->> all-bank-transactions
-                                       (new->internal-transactions nil)
+                                       (map bank->internal-transaction)
+                                       (update-date-index-in-new-transactions [])
                                        (category/add-categories categories)
                                        (map replace-nil-description))
             _ (db2/store-transactions processed-transactions)]
@@ -280,41 +322,79 @@
           _ (println "db-transactions: " (count db-transactions))
           last-update-date (last-update-date first-date db-transactions 14)
           latest-db-transactions (transactions-from db-transactions last-update-date)
-          latest-bank-transactions (retrieve-bank-transactions-from last-update-date token account-key)
+          ; latest-bank-transactions should only contain transactions within 14 days of the last db-transaction
+          ; latest-bank-transactions should be split in two: potential-replacements and new
+          [potential-replacements, new] (->> (retrieve-bank-transactions-from last-update-date token account-key)
+                                        (map bank->internal-transaction)
+                                        (split-into-potential-replacements-and-new latest-db-transactions))
           ; date-index is added if match towards db-transaction is found, thus it is only added for updates
           ; new transactions will have the date-index added as a continium from last update
           _ (println "latest-db-transactions: " (count latest-db-transactions))
-          _ (println "latest-bank-transactions: " (count latest-bank-transactions))
-          [updates, new] (merge/process-transactions-from-bank latest-db-transactions latest-bank-transactions)
-          updated-db-transactions (update-db-transactions latest-db-transactions updates)
-          internal-new (new->internal-transactions updated-db-transactions new)
-          ; add-categories to internal-new. updated should be recategorized as the description may have changed
+          _ (println "latest-bank-transactions: " (count potential-replacements) " " (count new))
+          [replacements, also-new] (merge/process-transactions-from-bank latest-db-transactions potential-replacements)
+          ; [x] remove outdated transactions from latest-db-transactions
+          ; [x] then add updates with updated date-indexs
+          ; [x] delete outdated transactions from db
+          updates-and-new (-> latest-db-transactions
+                              (remove-outdated-transactions (map :old replacements))
+                              (update-date-index-in-new-transactions (concat (map :new replacements) also-new new)))
+          ; date will change for updates (transactions during weekend), how will that affect update-db-transactions? Will need to update date-indexs for updates as well
+          ;; updated-db-transactions (update-db-transactions latest-db-transactions updates) ; should be removed; merge in updated versions based on date-indexs
+          ;; updated-new (update-date-index-in-new-transactions updated-db-transactions new)
           _ (println "get-transactions2: categories: " categories)
-          categorized-updates-and-new (->> (concat updated-db-transactions internal-new)
-                                        (category/add-categories categories)
-                                        (map replace-nil-description))
+          categorized-updates-and-new (->> updates-and-new
+                                           (category/add-categories categories)
+                                           (map replace-nil-description))
           ;; categorized-updates (->> updated-db-transactions
           ;;                               (category/add-categories categories)
           ;;                               (map replace-nil-description))
           old (old-transactions db-transactions last-update-date)
+          _ (db2/delete-transactions (map :old replacements))
           _ (db2/store-transactions categorized-updates-and-new)
           all-transactions (concat old categorized-updates-and-new)
-          all-transactions-no-source (map #(dissoc % :source) all-transactions)
-          ]
-          (println "Old: " (count old) " updates: " (count updated-db-transactions) " new: " (count internal-new))
+          all-transactions-no-source (map #(dissoc % :source) all-transactions)]
+          (println "Old: " (count old) " updates: " (count replacements) " new: " (count new))
           ;; (println "last 10 from bank: ")
           ;; (pp/pprint (take 20 (trans->debug latest-bank-transactions)))
-          ;; (println  "last 10 ext updates: ")
+          ;; (println  "last 10 latest-db-transactions: ")
           ;; (pp/pprint (take 10 (trans->debug latest-db-transactions)))
           ;; (println  "last 10 updates: ")
-          ;; (pp/pprint (take 20 (trans->debug updated-db-transactions)))
-          ;; (println  "last 10 internal-new: ")
-          ;; (pp/pprint (take 20 (trans->debug internal-new)))
-          ;; (println "updates and new: ")
+          ;; (pp/pprint (take 20 replacements))
+          ;; (println  "last 10 new: ")
+          ;; (pp/pprint (take 20 (trans->debug new)))
+          ;; (println  "last 10 updates-and-new: ")
+          ;; (pp/pprint (take 20 (trans->debug updates-and-new)))
+          ;; (println "categorized-updates-and-new: ")
           ;; (pp/pprint (take 20 (trans->debug categorized-updates-and-new)))
           ;; (println "all-transactions: ")
           ;; (pp/pprint (take 20 (trans->debug all-transactions)))
+          ;; (println "done")
       all-transactions-no-source)))
+
+(defn date->iso [iso-date]
+  (-> iso-date
+      date/iso-date-str->date
+      date/date->unixtime))
+
+(def db-transactions [{:amount 2.0 :date (date->iso "2025-11-10") :date-index 1 :description "cat"}
+                      {:amount 3.0 :date (date->iso "2025-11-10") :date-index 2 :description "asdg" :category-id "1234"}
+                      {:amount 3.0 :date (date->iso "2025-11-10") :date-index 3 :description "asdf"}])
+
+(def bank-transactions [{:amount 2.0 :date (date->iso "2025-11-10") :description "cat" :source {:amount 2.0 :date (date->iso "2025-11-10") :description "cat"}}
+                        {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf"}}
+                        {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf"}}
+                        {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf"}}
+                        {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf"}}])
+
+; updates have gotten new date and thus are not overwriting it self in db-transactions
+; they need to store the old date and date-index in order to delete the old transaction
+
+(let [[updates, new] (merge/process-transactions-from-bank db-transactions bank-transactions)
+      updated-db-transactions (update-db-transactions db-transactions updates)
+      ]
+      updates
+  ;; updated-db-transactions
+  )
 
 ;; (defn get-transactions [token account-key] ; maybe config?
 ;;   (println "get-transactions: " (count (db2/get-transactions-after "2022-01-01")))

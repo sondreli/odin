@@ -20,13 +20,13 @@
                :endpoint-override {:protocol :http
                                    :hostname "localhost"
                                    :port 8000}}))
-                                  
+
 (defn write-item
   "Writes an item to the specified DynamoDB table.
-  
+
   Args:
   - table-name: String, the name of the DynamoDB table.
-  - item: Map, where keys are attribute names and values are attribute values formatted 
+  - item: Map, where keys are attribute names and values are attribute values formatted
           for DynamoDB (e.g., {:S \"string\"}, {:N \"number\"})."
   [table-name item]
   (let [request {:TableName table-name
@@ -68,7 +68,7 @@
                         ;;  [:manually-categorized :ManuallyCategorized :BOOL false #(if (nil? %) false %)]
                          [:marked-by-filter?    :MarkedByFilter      :BOOL false identity]
                          [:source               :Source              :S    false identity]])
-                        
+
 (def category-config [[:user-id     :UserId     :S]
                       [:id          :Id         :S]
                       [:name        :Name       :S]
@@ -91,7 +91,7 @@
   ;; (println items)
   (let [
         request {:RequestItems {table-name
-                                (mapv (fn [item] {:PutRequest {:Item item}}) items)}} 
+                                (mapv (fn [item] {:PutRequest {:Item item}}) items)}}
         ;; _ (println (json/write-str request))
         response (aws/invoke dynamodb-client {:op :BatchWriteItem :request request})]
     response))
@@ -99,7 +99,7 @@
 (defn write-items-to-db [table-name items]
   ;; (println "Items to write:" items)
   (let [result (write-batch-items table-name items)]
-    (println "Batch Write Result:" result)
+    ;; (println "Batch Write Result:" result)
     (if (and (contains? result :cognitect.aws.http/status)
              (-> result :cognitect.aws.http/status (>= 400)))
       (do
@@ -108,11 +108,12 @@
           (println "ValidationException occurred. Problematic items:" items))
         result)
       (do
-        (if (contains? result :UnprocessedItems)
+        (when (contains? result :UnprocessedItems)
           (println "Warning: Some items were not processed:" (:UnprocessedItems result))
-          (println "All items written successfully"))
+          ;;(println "All items written successfully")
+          )
         result))))
-  
+
 (defn store-items [table-name items]
   (let [item-groups (partition 25 25 nil items)]
     (doall (map #(write-items-to-db table-name %) item-groups))))
@@ -128,7 +129,7 @@
           new-value {db-type db-val}]
     (assoc m db-key new-value))
     m))
-  
+
 (defn item->db-item [config item]
 (let [enriched-item (if (contains? item :user-id) item (assoc item :user-id "xxx"))]
   (reduce (partial add-key-val-from enriched-item) {} config)))
@@ -144,10 +145,10 @@
         ]
     ;; (doall (map #(write-transactions-to-db transaction-table-name %) db-transaction-groups))
     (let [store-result (store-items transaction-table-name db-transactions)]
-    transactions))
+    transactions)))
 ;;
 ;;  Store category
-;; 
+;;
 
 (defn store-category [category]
   ; do pre transformation of marker?
@@ -166,11 +167,44 @@
 
 
 ;;
+;; Delete transactions
+;;
+(defn delete-transactions
+  "Deletes multiple items from a DynamoDB table using BatchWriteItem.
+   - table-name: String name of the DynamoDB table.
+   - items: List of maps, each containing :pk (partition key, string) and :sk (sort key, string).
+   Handles batching in groups of 25 and retries unprocessed items."
+  [transactions]
+  (let [max-batch-size 25
+        table-name transaction-table-name
+        prepare-request (fn [{:keys [pk sk]}]
+                          {:DeleteRequest
+                           {:Key {"pk" {:S pk}
+                                  "sk" {:S sk}}}})
+        partition-and-sort-keys (->> transactions 
+                                     transactions->db-transactions
+                                     (map #(vector (:UserId %) (:Timestamp %))))
+        requests (map prepare-request partition-and-sort-keys)]
+
+    ;; Function to process a batch and handle unprocessed items recursively
+    (letfn [(process-batch [batch-request]
+              (let [response (aws/invoke dynamodb-client {:op :BatchWriteItem :request batch-request})
+                    unprocessed (get-in response [:UnprocessedItems table-name])]
+                (when (seq unprocessed)
+                  (process-batch {:RequestItems {table-name unprocessed}}))))]
+
+      ;; Partition requests into batches and process each
+      (doseq [group (partition-all max-batch-size requests)]
+        (process-batch {:RequestItems {table-name group}}))))
+  ;; Return nil or a success message if needed
+  nil)
+
+;;
 ;;  Read from database
 ;;
 (defn read-batch-items
   "Reads multiple items from the specified DynamoDB table using their primary keys.
-  
+
   Args:
   - table-name: String, the name of the DynamoDB table.
   - keys: List of Maps, where each map represents the primary key of an item."
@@ -204,7 +238,7 @@
   (println sort-key-value)
   (let [request {:TableName table-name
                  :KeyConditionExpression "#pk = :partitionval AND #sk > :sortval"
-                 :ExpressionAttributeValues {":partitionval" partition-key-value 
+                 :ExpressionAttributeValues {":partitionval" partition-key-value
                                              ":sortval" sort-key-value}
                  :ExpressionAttributeNames {"#pk" partition-key-name
                                             "#sk" sort-key-name}}
@@ -299,7 +333,6 @@
                                                    ["Timestamp" "Description" "Amount" "CategoryId" "MarkedByFilter"]
                                                    retrieve-all?)
         _ (println "Retrieved" (count db-transactions) "db-transactions from DynamoDB")
-        _ (println "Sample db-transaction:" (first db-transactions))
         _ (println "db-transactions one: " (first db-transactions))
         transactions (->> db-transactions (sort-by #(-> % :Timestamp :S)) db-transactions->transactions)
         _ (println "Converted to" (count transactions) "Clojure transactions")
@@ -325,7 +358,7 @@
 
 ;;
 ;; Delete entry
-;; 
+;;
 
 ; hmm, should also delete the category from all transactsions
 ; update the transactions in frontend, then pass all the updates to store-transactions

@@ -1,5 +1,6 @@
 (ns client.views
   (:require [re-frame.core :refer [dispatch subscribe]]
+            [reagent.core :as r]
             [clojure.string :as s]
             [client.services.date-service :as date]
             [client.services.color-service :as color]
@@ -22,6 +23,7 @@
 ;;               :on-change #(dispatch [:set-period-transactions (-> % .-target .-value)])}]]
   ;; )
 
+
 (defn filter-path []
   (let [html-path (->> @(subscribe [:filter-path])
                        (concat ["All"])
@@ -41,7 +43,7 @@
   []
   [:button {:class "button-class"
             :on-click  #(startup)}
-   "I want it, now!"])
+        "I want it, now!"])
 
 (defn search-bar []
   [:input {:type "text"
@@ -53,25 +55,65 @@
     (dispatch [:update-builder-category-color color])))
 
 (defn color-selector []
-  (let [colors (map #(-> [% 0.6 0.9]
-                         color/hsv2rgb
-                         color/color-base10->base16
-                         color/color-str) (color/generate-hues 16))]
-    [:div {:ref (fn [el]
-                  (when el
-                    (let [select-el (.querySelector el "select")
-                          choices (js/Choices. select-el
-                                               (clj->js {:searchEnabled false
-                                                         :itemSelectText ""
-                                                         :shouldSort false
-                                                         :allowHTML false}))]
-                      (set! (.-choicesInstance select-el) choices))))}
-     [:select {:id "color-selector"
-               :class "color-select"
-               :on-change #(-> % .-target .-value set-select-bg)}
-      (for [[idx color] (map-indexed vector colors)]
-        [:option {:value color
-                  :data-color color} color])]]))
+  (r/with-let [choices-ref (r/atom nil)
+               selected-color (r/atom nil)]
+    (let [colors (map #(-> [% 0.6 0.9]
+                           color/hsv2rgb
+                           color/color-base10->base16
+                           color/color-str) (color/generate-hues 16))]
+      [:div
+       [:div {:id "color-selector-outer" :ref (fn [el]
+                     (when (and el (not @choices-ref))
+                       (let [select-el (.getElementById js/document "color-selector")
+                             template-fn (fn []
+                                           #js {:choice (fn [^js choices data]
+                                                          (let [class-name (.-itemChoice (.-classNames choices))
+                                                                data-id (or (.-id data) "")
+                                                                data-value (or (.-value data) "")
+                                                                data-label (or (.-label data) "")
+                                                                div-el (.createElement js/document "div")]
+                                                            (.setAttribute div-el "class" (s/join " " [(or class-name "choices__item choices__item--choice")]))
+                                                            (.setAttribute div-el "data-choice" "data-choice")
+                                                            (.setAttribute div-el "data-choice-selectable" "")
+                                                            (.setAttribute div-el "data-id" data-id)
+                                                            (.setAttribute div-el "data-value" data-value)
+                                                            (.setAttribute div-el "style" (str "background-color: " data-value "; color: white; width: 100%; height: 30px; line-height: 30px; padding: 0 10px; margin: 0; box-sizing: border-box;"))
+                                                            (set! (.-innerText div-el) data-label)
+                                                            div-el))
+                                                :item (fn [^js choices data]
+                                                        (js/console.log "Item args" choices data)
+                                                        (let [class-name (.-item (.-classNames choices))
+                                                              data-value (or (.-value data) "")
+                                                              data-label (or (.-label data) "")
+                                                              div-el (.createElement js/document "div")]
+                                                          (.setAttribute div-el "class" (s/join " " [(or class-name "choices__item choices__item--selected")]))
+                                                          (.setAttribute div-el "data-item" "")
+                                                          (.setAttribute div-el "data-id" (or (.-id data) ""))
+                                                          (.setAttribute div-el "data-value" data-value)
+                                                          (.setAttribute div-el "style" (str "background-color: " data-value "; color: white; width: 100%; height: 30px; padding: 0 10px; margin: 0; box-sizing: border-box;"))
+                                                          (set! (.-innerText div-el) data-label)
+                                                          div-el))})
+                             choices-config #js {:itemSelectText ""
+                                                 :shouldSort false
+                                                 :allowHTML false
+                                                 :searchEnabled false
+                                                 :callbackOnCreateTemplates template-fn}]
+                         (js/console.log "select-el" select-el)
+                         (reset! choices-ref (js/Choices. select-el choices-config))
+                         (g/set select-el "choicesInstance" @choices-ref))))
+              :component-will-unmount (fn []
+                                        (when @choices-ref
+                                          (.destroy @choices-ref)))}
+        [:select {:id "color-selector"
+                  :class "color-select"
+                  :on-change (fn [e]
+                               (let [value (-> e .-target .-value)
+                                     select-el (.getElementById js/document "color-selector")
+                                     _ (.querySelector (.-parentNode select-el) ".choices__inner")]
+                                 (reset! @selected-color value)
+                                 (set-select-bg value)))}
+         (for [[idx color] (map-indexed vector colors)]
+           [:option {:value color :key idx} color])]]])))
 
 (defn add-disabled [props expr?]
   (if expr?
@@ -83,7 +125,8 @@
 
 (defn category-row [index category]
   ;; (println "edit-category-row: " category)
-  [[:tr {:value (:id category) :key (:name category) :class "row"}
+  [
+   [:tr {:value (:id category) :key (:name category) :class "row"} 
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Endre"]]
     [:td {:bgcolor (:color category)} (:name category)]
@@ -92,7 +135,9 @@
     [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
           "View"]]
     [:td [:a {:on-click #(dispatch [:delete-category (get-value-of-parent-row %)])}
-          "Del"]]]])
+          "Del"]]]
+   ]
+  )
 
 (defn edit-category-row [index category builder-category ready-to-store?]
   ;; (println "edit-category-row edit: " category)
@@ -142,10 +187,12 @@
         rows (mapcat identity (concat category-rows [new-category-rows]))]
     (.log js/console rows)
     [:div
-     [:h3 "Categories"]
-     [:table
-      [:tbody {:id "categories-tbody"}
-       rows]]]))
+   [:h3 "Categories"]
+   [:table
+    [:tbody {:id "categories-tbody"}
+     rows]
+    ]])
+  )
 
 (defn loading-label []
   (let [loading @(subscribe [:loading])]
@@ -188,7 +235,8 @@
    [:li.dropdown (submenu "som filter")
     [:ul.dropdown-content.absolute.hidden.text-gray-700.pl-2.ml-24.-mt-6
      (for [category categories]
-       [:li (menu-item (:name category) :as-filter transaction-desc)])]]])
+       [:li (menu-item (:name category) :as-filter transaction-desc)])]]
+   ])
 
 (defn diplayed-transactions-toggle-view []
   [:button {:on-click #(dispatch [:toggle-chart])} "Toggle bar-chart"])
@@ -207,7 +255,8 @@
     ;; (println "displayed-transactions-viewer 2 transactions: " (take 2 displayed-transactions))
     (case display-option
       :table (t-table/transactions-table displayed-transactions-data categories)
-      :bar-chart (chart/stacked-barchart displayed-transactions categories period chart-size))))
+      :bar-chart (chart/stacked-barchart displayed-transactions categories period chart-size))
+    ))
 
 (defn test-color [hue]
   (let [hsv [hue 0.6 0.9]
@@ -215,13 +264,17 @@
     (println color-str)
     [:p {:style {:background-color color-str}} "hello color"]))
 
+
 (defn test-chart []
   [:div
    [:button {:on-click #(dispatch [:draw-chart])} "make chart"]
-   [:div {:id "mychart"}]])
+   [:div {:id "mychart"}]]
+  )
 
 (defn test-route []
   [:button {:on-click #(dispatch [:navigate :about])} "Navigate"])
+
+
 
 (defn odin-app []
   [:div
