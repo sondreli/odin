@@ -177,10 +177,10 @@
   [transactions]
   (let [max-batch-size 25
         table-name transaction-table-name
-        prepare-request (fn [{:keys [pk sk]}]
+        prepare-request (fn [[pk sk]]
                           {:DeleteRequest
-                           {:Key {"pk" {:S pk}
-                                  "sk" {:S sk}}}})
+                           {:Key {"UserId"    pk
+                                  "Timestamp" sk}}})
         partition-and-sort-keys (->> transactions 
                                      transactions->db-transactions
                                      (map #(vector (:UserId %) (:Timestamp %))))

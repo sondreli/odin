@@ -53,7 +53,8 @@
 
 ;; Function to create the table with the defined schema
 (defn create-table [client]
-  (let [transaction-response (aws/invoke client {:op :CreateTable :request transaction-schema})
+  (let [
+        transaction-response (aws/invoke client {:op :CreateTable :request transaction-schema})
         category-response (aws/invoke client {:op :CreateTable :request category-schema})
         ]
     (println "Transaction table creation response:" transaction-response)

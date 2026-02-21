@@ -275,13 +275,6 @@
 (defn print-time [start-time msg] 
   (println "Elapsed time:" (- (System/currentTimeMillis) start-time) "ms " msg))
 
-(defn split-into-potential-replacements-and-new [latest-db-transactions latest-bank-transactions]
-  (if (empty? latest-db-transactions)
-    [[] latest-bank-transactions]
-    (let [one-week-after-last-date-in-db (-> latest-db-transactions last :date date/unixtime->localtime (date/add-days 21))
-          [potential-replacements new] (partition-by #(-> % :date date/unixtime->localtime (.isAfter one-week-after-last-date-in-db)) latest-bank-transactions)]
-      [potential-replacements new])))
-
 ; when no db-transactions
 ; retrieve all from bank
 ; else retrieve latest from bank
@@ -322,32 +315,23 @@
           _ (println "db-transactions: " (count db-transactions))
           last-update-date (last-update-date first-date db-transactions 14)
           latest-db-transactions (transactions-from db-transactions last-update-date)
-          ; latest-bank-transactions should only contain transactions within 14 days of the last db-transaction
-          ; latest-bank-transactions should be split in two: potential-replacements and new
-          [potential-replacements, new] (->> (retrieve-bank-transactions-from last-update-date token account-key)
-                                        (map bank->internal-transaction)
-                                        (split-into-potential-replacements-and-new latest-db-transactions))
+          latest-bank-transactions (->> (retrieve-bank-transactions-from last-update-date token account-key)
+                                         (map bank->internal-transaction))
           ; date-index is added if match towards db-transaction is found, thus it is only added for updates
           ; new transactions will have the date-index added as a continium from last update
-          _ (println "latest-db-transactions: " (count latest-db-transactions))
-          _ (println "latest-bank-transactions: " (count potential-replacements) " " (count new))
-          [replacements, also-new] (merge/process-transactions-from-bank latest-db-transactions potential-replacements)
-          ; [x] remove outdated transactions from latest-db-transactions
-          ; [x] then add updates with updated date-indexs
-          ; [x] delete outdated transactions from db
+          ;; _ (println "latest-db-transactions: " (count latest-db-transactions))
+          ;; _ (println "latest-bank-transactions: " (count latest-bank-transactions))
+          [replacements, new] (merge/process-transactions-from-bank latest-db-transactions latest-bank-transactions)
           updates-and-new (-> latest-db-transactions
                               (remove-outdated-transactions (map :old replacements))
-                              (update-date-index-in-new-transactions (concat (map :new replacements) also-new new)))
+                              (update-date-index-in-new-transactions (concat (map :new replacements) new)))
           ; date will change for updates (transactions during weekend), how will that affect update-db-transactions? Will need to update date-indexs for updates as well
           ;; updated-db-transactions (update-db-transactions latest-db-transactions updates) ; should be removed; merge in updated versions based on date-indexs
           ;; updated-new (update-date-index-in-new-transactions updated-db-transactions new)
-          _ (println "get-transactions2: categories: " categories)
+          ;; _ (println "get-transactions2: categories: " categories)
           categorized-updates-and-new (->> updates-and-new
                                            (category/add-categories categories)
                                            (map replace-nil-description))
-          ;; categorized-updates (->> updated-db-transactions
-          ;;                               (category/add-categories categories)
-          ;;                               (map replace-nil-description))
           old (old-transactions db-transactions last-update-date)
           _ (db2/delete-transactions (map :old replacements))
           _ (db2/store-transactions categorized-updates-and-new)

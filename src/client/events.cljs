@@ -295,6 +295,7 @@
  :store-category3
  (fn
    [{db :db} _]
+   (println "store-category3")
    (let [builder-category (if (-> db :builder-category :id (= "new-id"))
                             (-> db :builder-category (dissoc :id))
                             (:builder-category db))]
@@ -464,7 +465,7 @@
    [db [_ category-id index]]
    (println "edit-category3: " category-id)
    (let [current-builder-category (:builder-category db)
-         new-category {:id "new-id" :name "" :marker {:value ""}}
+         new-category {:id "new-id" :name "" :color "#5ce67e" :marker {:value ""}}
          categories (conj (:categories db) new-category)
          new-builder-category (when (not= category-id (-> current-builder-category :id str))
                                 (->>  categories

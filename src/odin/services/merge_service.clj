@@ -58,7 +58,7 @@
     ;;   [:next lookup-map])
     (cond
       (and (some? match) (-> match :levenshtein (> 0)))
-      [:replace (remove-match lookup-map amount match) (select-keys match [:date-index :category-id])]
+      [:replace (remove-match lookup-map amount match) (select-keys match [:date :date-index :category-id])]
       (some? match)
       [:discard (remove-match lookup-map amount match)]
       :else
@@ -82,7 +82,7 @@
                    first)]
     ;; (println "check-close-date: " match)
     (if (some? match)
-      [:replace (remove-match lookup-map amount match) (select-keys match [:date-index :category-id])]
+      [:replace (remove-match lookup-map amount match) (select-keys match [:date :date-index :category-id])]
       [:keep lookup-map])))
 
 (defn map-to-action [lookup-map transaction]
@@ -137,7 +137,7 @@
         (assoc-attribute [:category-id (-> db-match :category-id)])))
 
 (defn add-data-to-replacement3 [db-match bank-transaction]
-  {:old {:user-id (:user-id bank-transaction) :date (:date bank-transaction) :date-index (:date-index db-match)}
+  {:old {:user-id (:user-id bank-transaction) :date (:date db-match) :date-index (:date-index db-match)}
    :new (-> bank-transaction
       (assoc :user-id (:user-id bank-transaction))
       (assoc :amount (-> bank-transaction :source :amount))

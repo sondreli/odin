@@ -1,6 +1,6 @@
 (ns odin.auth-service-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [odin.core :as core]
+            [odin.services.auth-service :as auth]
             [clojure.test :as test]))
 
 (def response {:ssl-client-cert nil
@@ -69,7 +69,7 @@
 (deftest extract_authenticate_data_test
   (testing "that the code and group is retrieved from the response"
     (is (=
-         (core/extract_authenticate_data response)
+         (auth/extract_authenticate_data response)
          {:code "924378b5e8fa4d9e96937aa7a3c20855"
           :state "123456"}))))
 

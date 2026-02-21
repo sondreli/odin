@@ -91,13 +91,28 @@
 
 (defn refresh_tokens [tokens]
   (println "refresh_tokens")
-  (let [token_response_json (refresh_token_request client_id client_secret tokens)
-        tokens (-> token_response_json
-                   token_response2token
-                   add_token_expires_at)]
-    (println "refreshed tokens:")
-    (pp/pprint tokens)
-    (store_tokens tokens)))
+  (try
+    (let [token_response_json (refresh_token_request client_id client_secret tokens)
+          tokens (-> token_response_json
+                     token_response2token
+                     add_token_expires_at)]
+      (println "refreshed tokens:")
+      (pp/pprint tokens)
+      (store_tokens tokens))
+    (catch clojure.lang.ExceptionInfo e
+      (let [data (ex-data e)
+            body (try (json/read-str (:body data) :key-fn keyword) (catch Exception _ nil))]
+        (if (and (= 400 (:status data)) body)
+          (do
+            (println "\n=== TOKEN REFRESH FAILED ===")
+            (println "Error:" (:error body))
+            (println "Description:" (:error_description body))
+            (println "\nYour refresh token has expired or is invalid.")
+            (println "Please re-authenticate by visiting the app in your browser to get a new token.")
+            (println "============================\n")
+            (throw (ex-info (str "Token refresh failed: " (:error_description body))
+                            {:type :token-expired})))
+          (throw e))))))
 
 (defn read_tokens [token_file_name]
   (read-string (slurp token_file_name)))

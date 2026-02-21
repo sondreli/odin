@@ -12,7 +12,8 @@
             ["d3" :as d3]
             [client.components.chart-component.views :as chart]
             [client.components.period-selector-component.views :as period-sel]
-            [client.components.transactions-table-component.views :as t-table]))
+            [client.components.transactions-table-component.views :as t-table])
+  (:require-macros [reagent.core :refer [with-let]]))
 
 ;; (defn period-selector []
 ;;     [:div
@@ -49,71 +50,89 @@
   [:input {:type "text"
            :on-change #(dispatch [:filter-transactions (-> % .-target .-value)])}])
 
-(defn set-select-bg [color]
-  (let [select (. js/document getElementById "color-selector")
-        _ (set! (.. select -style -backgroundColor) color)]
-    (dispatch [:update-builder-category-color color])))
+(defn set-select-bg [color] (dispatch [:update-builder-category-color color]))
+ 
+(defn- init-choices! [el choices-ref initial-color on-change]
+  (when (and el (nil? @choices-ref))
+    (let [template-fn (fn []
+                        #js {:choice (fn [^js choices data]
+                                       (let [class-name (.-itemChoice (.-classNames choices))
+                                             data-id    (or (.-id data) "")
+                                             data-value (or (.-value data) "")
+                                             data-label (or (.-label data) "")
+                                             div-el     (.createElement js/document "div")]
+                                         (.setAttribute div-el "class" (s/join " " [(or class-name "choices__item choices__item--choice")]))
+                                         (.setAttribute div-el "data-choice" "data-choice")
+                                         (.setAttribute div-el "data-choice-selectable" "")
+                                         (.setAttribute div-el "data-id" data-id)
+                                         (.setAttribute div-el "data-value" data-value)
+                                         (.setAttribute div-el "style"
+                                                        (str "background-color: " data-value
+                                                             "; width: 48px; height: 24px;"
+                                                             " line-height: 24px; padding: 0 10px; margin: 0;"
+                                                             " box-sizing: border-box;"
+                                                             " display: flex; align-items: center; justify-content: center;"))
+                                         (set! (.-innerText div-el) "")
+                                         div-el))
 
-(defn color-selector []
-  (r/with-let [choices-ref (r/atom nil)
-               selected-color (r/atom nil)]
+                             :item   (fn [^js choices data]
+                                       (let [class-name (.-item (.-classNames choices))
+                                             data-value (or (.-value data) "")
+                                             data-label (or (.-label data) "")
+                                             div-el     (.createElement js/document "div")]
+                                         (.setAttribute div-el "class" (s/join " " [(or class-name "choices__item choices__item--selected")]))
+                                         (.setAttribute div-el "data-item" "")
+                                         (.setAttribute div-el "data-id" (or (.-id data) ""))
+                                         (.setAttribute div-el "data-value" data-value)
+                                         (.setAttribute div-el "style"
+                                                        (str "background-color: " data-value
+                                                             "; width: 48px; height: 24px;"
+                                                             " padding: 0 10px; margin: 0; box-sizing: border-box;"
+                                                             " display: flex; align-items: center; justify-content: center;"))
+                                         (set! (.-innerText div-el) "")
+                                         div-el))})
+
+          choices-config #js {:itemSelectText ""
+                              :shouldSort false
+                              :allowHTML false
+                              :searchEnabled false
+                              :callbackOnCreateTemplates template-fn}
+
+          instance (js/Choices. el choices-config)]
+
+      (reset! choices-ref instance)
+      (g/set el "choicesInstance" instance)
+
+      ;; Set initial value AFTER initialization
+      (when (and initial-color (not= initial-color ""))
+        (.setChoiceByValue instance initial-color))
+
+      ;; Optional: trigger your background update on init
+      (when (and initial-color on-change)
+        (on-change initial-color)))))
+
+(defn color-selector [{:keys [initial-color on-change]}]
+  (with-let [choices-ref (r/atom nil)]
     (let [colors (map #(-> [% 0.6 0.9]
                            color/hsv2rgb
                            color/color-base10->base16
-                           color/color-str) (color/generate-hues 16))]
-      [:div
-       [:div {:id "color-selector-outer" :ref (fn [el]
-                     (when (and el (not @choices-ref))
-                       (let [select-el (.getElementById js/document "color-selector")
-                             template-fn (fn []
-                                           #js {:choice (fn [^js choices data]
-                                                          (let [class-name (.-itemChoice (.-classNames choices))
-                                                                data-id (or (.-id data) "")
-                                                                data-value (or (.-value data) "")
-                                                                data-label (or (.-label data) "")
-                                                                div-el (.createElement js/document "div")]
-                                                            (.setAttribute div-el "class" (s/join " " [(or class-name "choices__item choices__item--choice")]))
-                                                            (.setAttribute div-el "data-choice" "data-choice")
-                                                            (.setAttribute div-el "data-choice-selectable" "")
-                                                            (.setAttribute div-el "data-id" data-id)
-                                                            (.setAttribute div-el "data-value" data-value)
-                                                            (.setAttribute div-el "style" (str "background-color: " data-value "; color: white; width: 100%; height: 30px; line-height: 30px; padding: 0 10px; margin: 0; box-sizing: border-box;"))
-                                                            (set! (.-innerText div-el) data-label)
-                                                            div-el))
-                                                :item (fn [^js choices data]
-                                                        (js/console.log "Item args" choices data)
-                                                        (let [class-name (.-item (.-classNames choices))
-                                                              data-value (or (.-value data) "")
-                                                              data-label (or (.-label data) "")
-                                                              div-el (.createElement js/document "div")]
-                                                          (.setAttribute div-el "class" (s/join " " [(or class-name "choices__item choices__item--selected")]))
-                                                          (.setAttribute div-el "data-item" "")
-                                                          (.setAttribute div-el "data-id" (or (.-id data) ""))
-                                                          (.setAttribute div-el "data-value" data-value)
-                                                          (.setAttribute div-el "style" (str "background-color: " data-value "; color: white; width: 100%; height: 30px; padding: 0 10px; margin: 0; box-sizing: border-box;"))
-                                                          (set! (.-innerText div-el) data-label)
-                                                          div-el))})
-                             choices-config #js {:itemSelectText ""
-                                                 :shouldSort false
-                                                 :allowHTML false
-                                                 :searchEnabled false
-                                                 :callbackOnCreateTemplates template-fn}]
-                         (js/console.log "select-el" select-el)
-                         (reset! choices-ref (js/Choices. select-el choices-config))
-                         (g/set select-el "choicesInstance" @choices-ref))))
-              :component-will-unmount (fn []
-                                        (when @choices-ref
-                                          (.destroy @choices-ref)))}
-        [:select {:id "color-selector"
-                  :class "color-select"
-                  :on-change (fn [e]
-                               (let [value (-> e .-target .-value)
-                                     select-el (.getElementById js/document "color-selector")
-                                     _ (.querySelector (.-parentNode select-el) ".choices__inner")]
-                                 (reset! @selected-color value)
-                                 (set-select-bg value)))}
-         (for [[idx color] (map-indexed vector colors)]
-           [:option {:value color :key idx} color])]]])))
+                           color/color-str)
+                      (color/generate-hues 16))]
+      [:div#color-selector-outer
+       [:select.color-select
+        {:ref #(when %
+                 (init-choices! % choices-ref initial-color on-change))
+         :on-change (fn [e]
+                      (let [v (.. e -target -value)]
+                        (when on-change
+                          (on-change v))
+                        (set-select-bg v)))}
+        (for [[i color] (map-indexed vector colors)]
+          [:option {:key i :value color} ""])]]) ; empty label → color swatch only
+
+    (finally
+      (when-let [i @choices-ref]
+        (.destroy i)))))
 
 (defn add-disabled [props expr?]
   (if expr?
@@ -148,9 +167,15 @@
     [:td [:a {:on-click #(dispatch [:edit-category3 (get-value-of-parent-row %) index])}
           "Lukk"]]
     [:td {:bgcolor (:color category)}
-     [:input {:type "text" :placeholder "Navn" :value (:name builder-category)
+     [:div {:style {:display "flex" :align-items "center"}}
+[:input {:type "text" :placeholder "Navn" :value (:name builder-category)
               :on-change #(dispatch [:update-builder-category-name (-> % .-target .-value)])}]
-     (color-selector)]
+     [color-selector {:initial-color (:color-value category)
+                      :on-change     (fn [new-color] (set-select-bg new-color))
+                      :key           (:id category)}]  ;; CRITICAL when multiple rows!
+      ]
+     
+     ]
     [:td {:align "right"} (gstring/format "%.2f"
                                           (-> category :amount (* 100) Math/round (/ 100)))]
     [:td [:a {:on-click #(dispatch [:view-category (:name category)])}
@@ -159,7 +184,7 @@
           "Del"]]]
    [:tr {:key (str (:id category) "2")}
     [:td {:style {:vertical-align "top"}}
-     [:button (-> {:class "buttom-class"
+     [:button (-> {:class "button-class"
                    :on-click #(dispatch [:store-category3])}
                   (add-disabled ready-to-store?)) "Lagre"]]
     [:td
