@@ -168,11 +168,11 @@
     (str year "-" label)))
 
 (defn day-label->period [label period]
-  (let [date (:start period)
+  (let [date (js/Date. (.getTime (:start period)))
         day (js/parseInt label)
-        start (unixtime->localdate (.setDate date day))
-        end (unixtime->localdate (.setDate date (inc day)))]
-    {:start start :end end}))
+        start (js/Date. (.setDate date day))
+        end (js/Date. (.setDate date (inc day)))]
+    {:start start :end end :period-type :month}))
 
 (defn month-label->period [month-label]
   (let [[year-last2 label] (s/split month-label #"-")

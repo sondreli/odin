@@ -1,10 +1,50 @@
 (ns client.events.utils
   (:require [client.services.date-service :as date]
             [clojure.set :as set]
+            [clojure.string :as s]
             [common.category-service :as category]
             [cljs.spec.alpha :as spec]
-            [re-frame.core :refer [after]]
-   ))
+            [re-frame.core :refer [after]]))
+
+(def ^:private unicode-replacements
+  [["\u2018" "'"]   ; left single quote
+   ["\u2019" "'"]   ; right single quote
+   ["\u201C" "\""]  ; left double quote
+   ["\u201D" "\""]  ; right double quote
+   ["\u2013" "-"]   ; en-dash
+   ["\u2014" "-"]   ; em-dash
+   ["\u2026" "..."] ; ellipsis
+   ["\u00A0" " "]   ; non-breaking space
+   ["\u2010" "-"]   ; hyphen
+   ["\u2011" "-"]   ; non-breaking hyphen
+   ["\u2012" "-"]   ; figure dash
+   ["\u2032" "'"]   ; prime
+   ["\u2033" "\""]  ; double prime
+   ["\u00AB" "\""]  ; left guillemet
+   ["\u00BB" "\""]  ; right guillemet
+   ["\u02BC" "'"]   ; modifier letter apostrophe
+   ["\u2024" "."]   ; one dot leader
+   ["\uFF1A" ":"]   ; fullwidth colon
+   ["\uFF0E" "."]   ; fullwidth full stop
+   ["\uFF08" "("]   ; fullwidth left paren
+   ["\uFF09" ")"]   ; fullwidth right paren
+   ["\uFF3B" "["]   ; fullwidth left bracket
+   ["\uFF3D" "]"]   ; fullwidth right bracket
+   ["\uFF5B" "{"]   ; fullwidth left brace
+   ["\uFF5D" "}"]   ; fullwidth right brace
+   ["\uFF0A" "*"]   ; fullwidth asterisk
+   ["\uFF0B" "+"]   ; fullwidth plus
+   ["\uFF1F" "?"]   ; fullwidth question mark
+   ["\uFF5C" "|"]   ; fullwidth vertical line
+   ["\uFF3C" "\\"]  ; fullwidth backslash
+   ["\uFF04" "$"]   ; fullwidth dollar
+   ["\uFF3E" "^"]   ; fullwidth caret
+   ["\u02C6" "^"]]) ; modifier letter circumflex
+
+(defn sanitize-input [text]
+  (reduce (fn [s [from to]] (s/replace s from to))
+          (or text "")
+          unicode-replacements))
 
 (defn check-and-throw
   "Throws an exception if `db` doesn't match the Spec `a-spec`."

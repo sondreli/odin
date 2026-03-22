@@ -5,10 +5,13 @@
             [client.components.chart-component.events :as chart-events]
             [client.components.transactions-table-component.events :as t-table-events]
             [client.components.period-selector-component.events :as period-selector-events]
+            [client.components.treemap-component.events]
+            [client.components.reports.events]
             [client.subs]
+            [client.components.treemap-component.subs]
             [client.db]
             [client.routes :as routes]
-            ;; [client.date-service]
+            [client.api :as api]
             [reagent.core :as reagent]
             [re-frame.core :as rf :refer [dispatch-sync]]))
 
@@ -24,5 +27,6 @@
 
 (defn main! []
   (dispatch-sync [:initialise-db])
+  (rf/dispatch [:check-auth])
   (mount)
   (print "Hello World!"))

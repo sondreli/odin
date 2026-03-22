@@ -80,3 +80,43 @@
    (let [result (:show-uncategorized-transactions? db)]
      (println "show-uncategorized-transactions? subscription called, result:" result)
      result)))
+
+(reg-sub
+ :active-menu
+ (fn [db _]
+   (:active-menu db)))
+
+(reg-sub
+ :reports
+ (fn [db _]
+   (:reports db)))
+
+(reg-sub
+ :tags
+ (fn [db _]
+   (:tags db)))
+
+(reg-sub
+ :period-transactions
+ (fn [db _]
+   (:period-transactions db)))
+
+(reg-sub
+ :reports-period
+ (fn [db _]
+   (:reports-period db)))
+
+(reg-sub
+ :auth
+ (fn [db _]
+   (:auth db)))
+
+(reg-sub
+ :auth-view
+ (fn [db _]
+   (:auth-view db)))
+
+(reg-sub
+ :accounts
+ (fn [db _]
+   (:accounts db)))

@@ -7,6 +7,7 @@
       "test": "echo \"Error: no test specified\" && exit 1",
       "tw": "npx tailwindcss build ./src/client/tw/style.css -o ./public/css/main.css",
       "watch": "shadow-cljs watch app",
+      "watch:mobile": "shadow-cljs watch mobile",
       "watch:css": "onchange './src/client/tw/*css' -- npm run tw",
       "watch:css2": "tailwindcss -i src/css/tailwind.css -o public/css/style.css --watch"
    },
@@ -31,6 +32,7 @@
       "create-react-class": "^15.6.3",
       "d3": "7.8.5",
       "react": "^16.9.0",
-      "react-dom": "^16.9.0"
+      "react-dom": "^16.9.0",
+      "react-native": "0.84.1"
    }
 }

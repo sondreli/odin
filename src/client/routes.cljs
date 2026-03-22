@@ -7,7 +7,7 @@
             [client.services.date-service :as date]))
 
 (defn custom-match [key]
-  [#"[A-Za-z0-9:%\*\- æøåÆØÅ]+" key])
+  [#"[A-Za-z0-9:%\*\-\.&(),'+_ æøåÆØÅ]+" key])
 
 (def routes
   (atom
@@ -75,32 +75,38 @@
     (re-frame/dispatch [:view-category-period [nil filter-path period display-option]])
     ))
 
+(defn- browser? []
+  (and (exists? js/window)
+       (exists? js/document)
+       (some? (.-createElement js/document))))
+
 (defonce history
-  (pushy/pushy dispatch parse))
+  (when (browser?)
+    (pushy/pushy dispatch parse)))
 
 (defn navigate! [handler]
+  (when history
     (println "navigate! " handler)
     (println (apply url-for handler))
-  (pushy/set-token! history (apply url-for handler)))
+    (pushy/set-token! history (apply url-for handler))))
 
 (defn navigate-to-parameters [period display-option filter-path]
-  ;; (println "navigate-to-parameters/filter-path: " filter-path)
-  ;; (println "navigate-to-parameters/display-option: " display-option)
-  (let [handler-type (case (count filter-path)
-                        0 :period-display
-                        1 :period-display-category
-                        2 :period-display-category-filter)
-        filter-path-navigation (case (count filter-path)
-                                 0 []
-                                 1 [:category (first filter-path)]
-                                 2 [:category (first filter-path) :category-filter (second filter-path)])
-        handler (-> [handler-type]
-                    (concat (when (some? period) [:start (-> period :start date/localdate->unixtime)
-                                                  :end (-> period :end date/localdate->unixtime)
-                                                  :period-type (-> period :period-type name)]))
-                    (concat (when (some? display-option) [:display-option display-option]))
-                    (concat filter-path-navigation))]
-    (navigate! handler)))
+  (when history
+    (let [handler-type (case (count filter-path)
+                          0 :period-display
+                          1 :period-display-category
+                          2 :period-display-category-filter)
+          filter-path-navigation (case (count filter-path)
+                                   0 []
+                                   1 [:category (url/url-encode (first filter-path))]
+                                   2 [:category (url/url-encode (first filter-path)) :category-filter (url/url-encode (second filter-path))])
+          handler (-> [handler-type]
+                      (concat (when (some? period) [:start (-> period :start date/localdate->unixtime)
+                                                    :end (-> period :end date/localdate->unixtime)
+                                                    :period-type (-> period :period-type name)]))
+                      (concat (when (some? display-option) [:display-option display-option]))
+                      (concat filter-path-navigation))]
+      (navigate! handler))))
 
 (defn ensure-period [db period?]
   (if (some? period?) period? (:period db)))
@@ -113,9 +119,12 @@
   (if (some? filter-path?) filter-path? (:filter-path db)))
 
 (defn start! [period display-option]
+  (when history
     (println "hello bidi")
-  (pushy/start! history)
-  (navigate-to-parameters period display-option nil))
+    (pushy/start! history)
+    (let [current-route (bidi/match-route @routes (.-pathname (.-location js/window)))]
+      (when (or (nil? current-route) (= :home (:handler current-route)))
+        (navigate-to-parameters period display-option nil)))))
 
 (re-frame/reg-event-fx
  :navigate

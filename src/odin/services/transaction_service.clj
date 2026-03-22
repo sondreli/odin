@@ -11,6 +11,7 @@
             [common.category-service :as category]
             [odin.services.date-service :as date]
             [odin.services.auth-service :as auth]
+            [odin.services.account-service :as account-svc]
             [odin.services.merge-service :as merge]
             [clojure.test :as test :refer [deftest is do-report]]
             ;[odin.services.transaction-service :as transaction]
@@ -166,8 +167,8 @@
 ;;         tx-result (db/store-transactions transactions)]
 ;;     transactions))
 
-(defn bank->internal-transaction [new-transaction]
-  {:user-id "xxx"
+(defn bank->internal-transaction [user-id new-transaction]
+  {:user-id user-id
    :amount (-> new-transaction :amount str Double/parseDouble)
    :date (:date new-transaction)
    :date-index 0
@@ -289,34 +290,29 @@
 ; merge (only if some db-transactions)
 ; store (new and updates)
 ; return 
-(defn get-transactions2 [token account-key]
-  (let [;start-time (System/currentTimeMillis)
-        categories (db2/get-categories)
+(defn get-transactions2 [user-id token account-key]
+  (let [categories (db2/get-categories user-id)
         first-date "2015-01-01"
-        db-transactions (db2/get-transactions-after first-date false)
-        ;_ (println "db-transactions2: " (take 10 db-transactions))
-        ]
+        db-transactions (db2/get-transactions-after user-id first-date false)]
 
-    ;; Check if database is empty, if so retrieve all transactions year by year
     (when (empty? db-transactions)
       (println "No transactions in database, retrieving all transactions from bank...")
       (let [all-bank-transactions (retrieve-all-transactions-year-by-year token account-key)
             _ (println "Total retrieved from bank:" (count all-bank-transactions))
             processed-transactions (->> all-bank-transactions
-                                       (map bank->internal-transaction)
+                                       (map (partial bank->internal-transaction user-id))
                                        (update-date-index-in-new-transactions [])
                                        (category/add-categories categories)
                                        (map replace-nil-description))
             _ (db2/store-transactions processed-transactions)]
         (println "Stored" (count processed-transactions) "transactions in database")))
 
-    ;; Refresh db-transactions after potential initial load
-    (let [db-transactions (db2/get-transactions-after first-date true)
+    (let [db-transactions (db2/get-transactions-after user-id first-date true)
           _ (println "db-transactions: " (count db-transactions))
           last-update-date (last-update-date first-date db-transactions 14)
           latest-db-transactions (transactions-from db-transactions last-update-date)
           latest-bank-transactions (->> (retrieve-bank-transactions-from last-update-date token account-key)
-                                         (map bank->internal-transaction))
+                                         (map (partial bank->internal-transaction user-id)))
           ; date-index is added if match towards db-transaction is found, thus it is only added for updates
           ; new transactions will have the date-index added as a continium from last update
           ;; _ (println "latest-db-transactions: " (count latest-db-transactions))
@@ -338,14 +334,8 @@
           all-transactions (concat old categorized-updates-and-new)
           all-transactions-no-source (map #(dissoc % :source) all-transactions)]
           (println "Old: " (count old) " updates: " (count replacements) " new: " (count new))
-          ;; (println "last 10 from bank: ")
-          ;; (pp/pprint (take 20 (trans->debug latest-bank-transactions)))
-          ;; (println  "last 10 latest-db-transactions: ")
-          ;; (pp/pprint (take 10 (trans->debug latest-db-transactions)))
-          ;; (println  "last 10 updates: ")
-          ;; (pp/pprint (take 20 replacements))
-          ;; (println  "last 10 new: ")
-          ;; (pp/pprint (take 20 (trans->debug new)))
+          (println "latest-db-transactions: " (count latest-db-transactions))
+          (println "latest-bank-transactions: " (count latest-bank-transactions))
           ;; (println  "last 10 updates-and-new: ")
           ;; (pp/pprint (take 20 (trans->debug updates-and-new)))
           ;; (println "categorized-updates-and-new: ")
@@ -409,66 +399,97 @@
        (map #(only_fields % :amount :description))))
 
 
-(defn get-all-transactions []
-  (let [tokens (auth/get_tokens "session_tokens.txt")
-        _ (println "retrieve accounts")
-        accounts (retrieve_accounts tokens)
-        body_str (-> accounts :body)
-        body (json/read-str body_str :key-fn keyword)
-        account_key (:key body)
-        _ (println "account_key: " account_key)
-        ;; transactions_response (retrieve_transactions tokens account_key)
-        ;; all_transactions (:transactions (json/read-str (:body transactions_response) :key-fn keyword))
-        all-transactions (get-transactions2 tokens account_key)
-        ;transactions (filter_transactions all-transactions :description "google")
-        ]
+(defn get-all-transactions
+  ([]
+   (get-all-transactions "xxx"))
+  ([user-id]
+   (let [tokens (auth/get_tokens "session_tokens.txt")
+         _ (println "retrieve accounts")
+         accounts (retrieve_accounts tokens)
+         body_str (-> accounts :body)
+         body (json/read-str body_str :key-fn keyword)
+         account_key (:key body)
+         _ (println "account_key: " account_key)
+         all-transactions (get-transactions2 user-id tokens account_key)]
+     (pp/pprint (take 3 all-transactions)))))
 
-    ;; (pp/pprint accounts)
-    ;; (pp/pprint (take 1 all-transactions))
-    ;; (pp/pprint transactions)
-    ;; (println account_key)
-    (pp/pprint (take 3 all-transactions))
-    ))
+(defn get-db-only-transactions
+  "Return transactions from DB only, no bank fetching."
+  [user-id]
+  (db2/get-transactions-after user-id "2015-01-01" true))
 
 (defn transaction_handler_test [req]
   {:status 200
        :headers {"Content-Type" "application/json"}
        :body (json/write-str ["hello"])})
 
-(defn transaction_handler [request]
-  (pp/pprint request)
-  (let [tokens (auth/get_tokens "session_tokens.txt")
-        _ (println "retrieve accounts")
-        accounts (retrieve_accounts tokens)
-        body_str (-> accounts :body)
-        body (json/read-str body_str :key-fn keyword)
-        account_key (:key body)
-        all-transactions (get-transactions2 tokens account_key)
-        response-body (json/write-str all-transactions)
-        ;; _ (println (take 3 all-transactions))
-        ]
+(defn- resolve-bank-account-key
+  "Get the bank account key, fetching from the bank API and storing it if not yet known."
+  [user-id account-id tokens existing-key]
+  (if existing-key
+    existing-key
+    (do
+      (println "Fetching bank account key from API...")
+      (let [accounts-response (retrieve_accounts tokens)
+            body (json/read-str (-> accounts-response :body) :key-fn keyword)
+            bank-key (:key body)]
+        (when bank-key
+          (account-svc/store-bank-account-key user-id account-id bank-key))
+        bank-key))))
 
-    (if all-transactions
-      {:status 200
-       :headers {"Content-Type" "application/json"
-                 "Content-Length" (-> response-body .getBytes count str)}
-       :body response-body
-      ;;  :body (json/write-str (take-last 2000 all-transactions))
-       }
+(defn transaction_handler [request]
+  (try
+    (let [user-id (:user-id request)
+          user-accounts (account-svc/get-user-accounts user-id)
+          first-account (first user-accounts)]
+      (if-not first-account
+        (let [db-txns (get-db-only-transactions user-id)
+              response-body (json/write-str db-txns)]
+          {:status 200
+           :headers {"Content-Type" "application/json"}
+           :body response-body})
+        (let [account-id (:account-id first-account)
+              tokens (auth/get-tokens-for-account
+                       #(account-svc/get-account-tokens user-id account-id)
+                       #(account-svc/store-account-tokens user-id account-id %))]
+          (if (nil? tokens)
+            (let [db-txns (get-db-only-transactions user-id)
+                  response-body (json/write-str db-txns)]
+              {:status 200
+               :headers {"Content-Type" "application/json"}
+               :body response-body})
+            (let [account (db2/get-account user-id account-id)
+                  account-key (resolve-bank-account-key user-id account-id tokens (:bank-account-key account))]
+              (if (nil? account-key)
+                (let [db-txns (get-db-only-transactions user-id)
+                      response-body (json/write-str db-txns)]
+                  {:status 200
+                   :headers {"Content-Type" "application/json"}
+                   :body response-body})
+                (let [all-transactions (get-transactions2 user-id tokens account-key)
+                      response-body (json/write-str all-transactions)]
+                  (if all-transactions
+                    {:status 200
+                     :headers {"Content-Type" "application/json"
+                               "Content-Length" (-> response-body .getBytes count str)}
+                     :body response-body}
+                    {:status 500
+                     :headers {"Content-Type" "application/json"}
+                     :body (json/write-str {:error "Failed to load transactions"})}))))))))
+    (catch Exception e
+      (println "transaction_handler error:" (.getMessage e))
+      (.printStackTrace e)
       {:status 500
-       :headers {"Content-Type" "text/html"}
-       :body "all-transactions failed to complete: "})))
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str {:error (str "Server error: " (.getMessage e))})})))
 
 (defn transaction_details_handler [id request]
-  (pp/pprint id)
   (let [tokens (auth/get_tokens "session_tokens.txt")
-        transaction_details (retrieve_transaction_details tokens id)
-        ]
+        transaction_details (retrieve_transaction_details tokens id)]
     (if (nil? transaction_details)
       {:status 200
        :headers {"Content-Type" "text/html"}
        :body (str "retrieveing transaction details failed")}
       {:status 200
        :headers {"Content-Type" "text/html"}
-       :body (json/write-str transaction_details)}
-      )))
+       :body (json/write-str transaction_details)})))

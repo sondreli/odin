@@ -39,10 +39,11 @@
     (let [month-index (date/current-month)
           year (date/current-year)
           unit-index (date/current-month)
-          long-view (date/init-long-view)
-          ]
+          long-view (date/init-long-view)]
       (println "default-db/long-view: " long-view)
-      {:period-selector {:time-unit :month
+      {:auth {:token nil :user nil :loading? false :error nil}
+       :auth-view :login
+       :period-selector {:time-unit :month
                          :transaction-years []
                          :short-view {:unit-index unit-index}
                          :long-view long-view
@@ -54,5 +55,12 @@
        :open-category-row nil
        :displayed-transactions-data {:display-option :table}
        :show-categorized-transactions? false
-       :show-uncategorized-transactions? false})
-  )
+       :show-uncategorized-transactions? false
+       :treemap-target 100000
+       :active-menu :transaksjoner
+       :reports []
+       :tags []
+       :accounts []
+       :reports-period {:start (date/first-day-of-month month-index year)
+                        :end (date/first-day-of-next-month month-index year)
+                        :period-type :month}}))

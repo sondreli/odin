@@ -15,8 +15,11 @@
   (if (-> subtext count (> 0))
     (if (and (s/includes? subtext "regex:")
              (-> subtext (subs 0 6) (= "regex:")))
-      (re-matches (re-pattern (str ".*" (-> subtext (subs 6) s/lower-case) ".*"))
-                  (s/lower-case description))
+      (try
+        (re-matches (re-pattern (str ".*" (-> subtext (subs 6) s/lower-case) ".*"))
+                    (s/lower-case description))
+        (catch #?(:clj Exception :cljs :default) _
+          false))
       (s/includes? (s/lower-case description) (s/lower-case subtext)))
     false))
 
@@ -38,8 +41,30 @@
 (defn find-sub-filter [category transaction]
   (let [lines (-> category :marker :description)
         desc (:description transaction)
-        match (some #(when (match-fun desc %) %) lines)]
-    match))
+        matches (filter #(match-fun desc %) lines)]
+    (when (seq matches) (last matches))))
+
+(defn find-matching-filters [category transaction]
+  (let [filters (:filters category)
+        desc (:description transaction)]
+    (when (and (seq filters) (some? desc))
+      (filterv #(match-fun desc (:text %)) filters))))
+
+(defn collect-tag-ids-from-filters [matching-filters]
+  (->> matching-filters
+       (mapcat :tag-ids)
+       (filter some?)
+       distinct
+       vec))
+
+(defn apply-tags-from-filters [categories transaction]
+  (let [all-matching (mapcat #(find-matching-filters % transaction) categories)
+        tag-ids (collect-tag-ids-from-filters all-matching)]
+    (if (seq tag-ids)
+      (-> transaction
+          (update :tag-ids #(vec (distinct (concat (or % []) tag-ids))))
+          (assoc :filter-tag-ids tag-ids))
+      transaction)))
 
 ;; (find-sub-filter {:marker {:description ["test"]}} {:description "my  trans"})
 
@@ -116,9 +141,10 @@
     (reduce fun {:all [] :updates []} transactions)))
 
 (defn categorize-transaction [categories transaction]
-  (if-some [category (some #(when (match? % transaction) %) categories)]
-    (update-match category transaction)
-    transaction))
+  (let [cat-matched (if-some [category (some #(when (match? % transaction) %) categories)]
+                      (update-match category transaction)
+                      transaction)]
+    (apply-tags-from-filters categories cat-matched)))
 
 (defn add-categories [categories transactions]
   (let [categorizer (partial categorize-transaction categories)]

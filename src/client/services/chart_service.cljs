@@ -133,15 +133,18 @@
     scale))
 
 (defn y-scale [series height]
-  (let [max (d3/max series (fn [d] (d3/max d (fn [d] (get d 1)))))
-        min (d3/min series (fn [d] (d3/min d (fn [d] (get d 0)))))
-        height height
+  (let [max-val (d3/max series (fn [d] (d3/max d (fn [d] (get d 1)))))
+        min-val (d3/min series (fn [d] (d3/min d (fn [d] (get d 0)))))
+        max (if (and (some? max-val) (not (js/isNaN max-val))) max-val 0)
+        min (if (and (some? min-val) (not (js/isNaN min-val))) min-val 0)
+        ;; avoid degenerate domain when min=max (e.g. empty data)
+        [domain-min domain-max] (if (= min max) [(- min 1) (+ max 1)] [min max])
         marginBottom 20
         marginTop 10]
     (-> d3
         .scaleLinear
-        (.domain [min max])
-        (.rangeRound [(- height marginBottom) marginTop]))))
+        (.domain (clj->js [domain-min domain-max]))
+        (.rangeRound (clj->js [(- height marginBottom) marginTop])))))
 
 (defn make-colors [series color-map]
   (let [range (.map series (fn [d] (get color-map (g/get d "key"))))
@@ -196,32 +199,53 @@
                 (.join "rect")
                 (.attr "x" (fn [d] (x (first (g/get d "data")))))
                 ;; (.attr "x" (fn [d] (x (g/get (g/get d "data") "group"))))
-                (.attr "y" (fn [d] (y (max (-> d first) (-> d second)))))
+                (.attr "y" (fn [d]
+                  (let [v0 (g/get d 0)
+                        v1 (g/get d 1)
+                        top (if (and (number? v0) (number? v1) (not (js/isNaN v0)) (not (js/isNaN v1)))
+                              (max v0 v1)
+                              js/NaN)]
+                    (if (js/isNaN top)
+                      (- height marginBottom)
+                      (y top)))))
                 (.attr "width" (.bandwidth x))
-                (.attr "height" (fn [d] (abs (- (-> d first y) (-> d second y)))))
-                (.on "mouseover" (fn [event d]
-                                   (let [key (g/get d "key")
-                                         category-name (->> key (get category-map) :name)
-                                         category-amount (-> d (g/get "data") (get 1) (.get key) :amount)
-                                         tooltip-text (str category-name " - " category-amount)]
-                                     (this-as this (-> d3 (.select this)
-                                                       (.transition)
-                                                       (.duration "50")
-                                                       (.attr "opacity" ".85")))
-                                     (show-tooltip-label "div.tooltip-barchart" "1")
-                                     (position-tooltip-label "div.tooltip-barchart" event tooltip-text))
-                                   
-                                   ))
-                (.on "mouseout" (fn [d i] (this-as this (-> d3 (.select this)
-                                                            (.transition)
-                                                            (.duration "50")
-                                                            (.attr "opacity" "1")))
-                                  (show-tooltip-label "div.tooltip-barchart" "0")))
-                (.on "click" (fn [event d] (let [category (->> (g/get d "key") (get category-map) :name)
-                                                 month (-> d (g/get "data") first)
-                                                 sub-period (date/date-label->period month period)]
-                                             (show-tooltip-label "div.tooltip-barchart" "0")
-                                             (dispatch [:navigate [sub-period :table [category]]]))))
+                (.attr "height" (fn [d]
+                  (try
+                    (let [v0 (g/get d 0)
+                          v1 (g/get d 1)
+                          y0 (y v0)
+                          y1 (y v1)
+                          raw (abs (- y0 y1))]
+                      (if (or (js/isNaN raw) (neg? raw)) 0 raw))
+                    (catch :default _ 0))))
+                (#(doto %
+                    (.on "mouseover" (fn [event d]
+                                       (let [key (g/get d "key")
+                                             category-name (->> key (get category-map) :name)
+                                             category-amount (-> d (g/get "data") (get 1) (.get key) :amount)
+                                             tooltip-text (str category-name " - " category-amount)]
+                                         (-> d3 (.selectAll "#mychart rect")
+                                             (.transition)
+                                             (.duration 150)
+                                             (.attr "opacity" "0.4"))
+                                         (this-as this (-> d3 (.select this)
+                                                           (.transition)
+                                                           (.duration 150)
+                                                           (.attr "opacity" "1")))
+                                         (show-tooltip-label "div.tooltip-barchart" "1")
+                                         (position-tooltip-label "div.tooltip-barchart" event tooltip-text))))
+                    (.on "mouseout" (fn [d i]
+                                      (-> d3 (.selectAll "#mychart rect")
+                                          (.transition)
+                                          (.duration 150)
+                                          (.attr "opacity" "1"))
+                                      (show-tooltip-label "div.tooltip-barchart" "0")))
+                    (.on "click" (fn [event d]
+                                   (let [category (->> (g/get d "key") (get category-map) :name)
+                                         month (-> d (g/get "data") first)
+                                         sub-period (date/date-label->period month period)]
+                                     (show-tooltip-label "div.tooltip-barchart" "0")
+                                     (dispatch [:navigate [sub-period :table [category]]]))))))
                 )
         ; horizontal axis
         svg2 (-> d3
@@ -248,11 +272,10 @@
                                       (show-tooltip-label "div.tooltip-barchart" "1")
                                       (position-tooltip-label "div.tooltip-barchart" event tooltip-text))))
                  (.on "mouseout" (fn [d i] (show-tooltip-label "div.tooltip-barchart" "0")))
-                 (.on "click" (fn [event d] (let [month d
-                                                  period (date/month-label->period month)]
+                 (.on "click" (fn [event d] (let [sub-period (date/date-label->period d period)]
                                               (show-tooltip-label "div.tooltip-barchart" "0")
-                                              (dispatch [:navigate [period nil nil]]))))
-                 )
+                                              (dispatch [:navigate [sub-period :table []]])))))
+                 
         ; vertical axis
         svg3 (-> d3
                  (.select "#mychart svg")
@@ -310,10 +333,7 @@
         data (period-transactions->data chart-transactions period)
         ;; _ (println "draw-stacked-barchart: " data)
         _ (.log js/console data)
-        color-map (-> (->> categories
-                           (map #(-> % (select-keys [:id :color]) vals))
-                           (map #(apply hash-map %))
-                           (reduce merge))
+        color-map (-> (into {} (map (fn [c] [(:id c) (or (:color c) "#ccc")]) categories))
                       (assoc "ukategorisert-in" "#ddd")
                       (assoc "ukategorisert-out" "#edd"))
         ;; _ (println "draw-stacked-barchart: color-map " color-map)

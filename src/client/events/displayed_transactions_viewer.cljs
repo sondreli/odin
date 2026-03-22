@@ -64,9 +64,12 @@
                        [(-> db :filter-path first)]
                        (let [category (some #(when (= (:category-id transaction) (:id %)) %)
                                             (:categories db))
-                             matcher (find-matcher transaction category)]
-                         [(:name category) matcher]))]
-     (dispatch [:navigate [nil nil filter-path]]))))
+                             matcher (when category (find-matcher transaction category))]
+                         (if matcher
+                           [(:name category) matcher]
+                           (when category [(:name category)]))))]
+     (when (seq filter-path)
+       (dispatch [:navigate [nil nil filter-path]])))))
 
 (reg-event-db
  :view-category-period

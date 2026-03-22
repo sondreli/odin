@@ -21,7 +21,16 @@
                 ;;                              :require "d3/dist/d3.js"}}}
                 :devtools {:after-load client.core/reload!
                            :http-root "public"
-                           :http-port 4000}}}
+                           :http-port 4000}}
+
+          :mobile {:target :react-native
+                   :init-fn client.mobile.core/init
+                   :output-dir "mobile/Odin/cljs-out"
+                   :compiler-options {:infer-externs :auto}
+                   :js-options {:resolve {"react-dom" {:target :global :global "null"}
+                                          "d3"        {:target :global :global "null"}
+                                          "choices.js" {:target :global :global "null"}}}}}
+
 
 
  }

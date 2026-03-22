@@ -1,32 +1,23 @@
 (ns odin.services.auth-service
-  (:import java.util.Base64)
   (:require [clojure.data.json :as json]
-            [clojure.tools.trace :as trace]
             [clojure.string :as s]
             [clojure.pprint :as pp]
             [clojure.java.browse :as browse :refer [browse-url]]
             [clojure.java.io :as io]
             [clj-http.client :as client]
-            [odin.services.auth-service :as auth]
-            [ring.adapter.jetty :as jetty]
-            [ring.util.codec :as codec]
-            [ring.middleware.params :as rmp]
-            [ring.middleware.multipart-params :as rmmp]
-            [clojure.test :as test :refer [deftest is do-report]]))
+            [odin.services.config-service :as config]))
 
-(def client_id "516d21d1-39f1-4712-978c-9634f27dd243")
-(def client_secret "c6306ed8-08c9-4de3-8ad7-2d345387f2be")
 (def token_response_atom (atom {}))
 (def token_response_delivered_promise (promise))
 (add-watch token_response_atom :watch-changed
            (fn [_ _ old new]
              (when-not (= old new) (deliver token_response_delivered_promise :changed))))
 
-;; Authenticate and authorize
-(defn authenticate [state client_id]
+(defn authenticate [state]
   (println "open in browser, authenticate and copy code from the return uri")
-  (let [redirect-url "https://localhost"
-        url (format "https://api-auth.sparebank1.no/oauth/authorize?client_id=%s&state=%s&redirect_uri=%s&finInst=fid-ostlandet&response_type=code" client_id state redirect-url)]
+  (let [redirect-url (config/redirect-uri "/auth/bank/callback")
+        url (format "https://api-auth.sparebank1.no/oauth/authorize?client_id=%s&state=%s&redirect_uri=%s&finInst=fid-ostlandet&response_type=code"
+                    config/client-id state redirect-url)]
     (println url)
     (browse-url url)))
 
@@ -42,28 +33,21 @@
         key-values)
     nil))
 
-(defn make_token_request [client_id
-                          client_secret
-                          code
-                          state
-                          redirect_uri]
+(defn make_token_request [code state redirect_uri]
   (client/post "https://api-auth.sparebank1.no/oauth/token"
-  ;(client/post "http://localhost:8080"
                {:content-type "application/x-www-form-urlencoded"
-                :form-params {:client_id client_id
-                              :client_secret client_secret
+                :form-params {:client_id config/client-id
+                              :client_secret config/client-secret
                               :code code
                               :grant_type "authorization_code"
                               :state state
                               :redirect_uri redirect_uri}}))
 
-(defn refresh_token_request [client_id
-                             client_secret
-                             {refresh_token :refresh_token}]
+(defn refresh_token_request [{refresh_token :refresh_token}]
   (client/post "https://api-auth.sparebank1.no/oauth/token"
                {:content-type "application/x-www-form-urlencoded"
-                :form-params {:client_id client_id
-                              :client_secret client_secret
+                :form-params {:client_id config/client-id
+                              :client_secret config/client-secret
                               :refresh_token refresh_token
                               :grant_type "refresh_token"}}))
 
@@ -78,27 +62,27 @@
         token_expires_at (+ unix_time_now expires_in)]
     (assoc tokens :token_expires_at token_expires_at)))
 
-(defn store_tokens [tokens]
+(defn store_tokens_to_file [tokens]
   (spit "session_tokens.txt" (with-out-str (pr tokens)))
   tokens)
 
-(defn make_tokens [client_id client_secret code state redirect_uri]
-  (let [token_response_json (make_token_request client_id client_secret code state redirect_uri)
+(defn make_tokens [code state redirect_uri]
+  (let [token_response_json (make_token_request code state redirect_uri)
         tokens (-> token_response_json
                    token_response2token
                    add_token_expires_at)]
-    (store_tokens tokens)))
+    (store_tokens_to_file tokens)))
 
 (defn refresh_tokens [tokens]
   (println "refresh_tokens")
   (try
-    (let [token_response_json (refresh_token_request client_id client_secret tokens)
+    (let [token_response_json (refresh_token_request tokens)
           tokens (-> token_response_json
                      token_response2token
                      add_token_expires_at)]
       (println "refreshed tokens:")
       (pp/pprint tokens)
-      (store_tokens tokens))
+      (store_tokens_to_file tokens))
     (catch clojure.lang.ExceptionInfo e
       (let [data (ex-data e)
             body (try (json/read-str (:body data) :key-fn keyword) (catch Exception _ nil))]
@@ -121,22 +105,50 @@
   (not (.exists (io/file token_file_name))))
 
 (defn is_token_expired [tokens]
-  (println "is_token_expired")
   (let [unix_time_now (quot (System/currentTimeMillis) 1000)
         token_expires_at (:token_expires_at tokens)]
-    (println (str "unix time now: " unix_time_now))
-    (println (str "token expires at: " token_expires_at))
-    (println (str "eval: " (> unix_time_now token_expires_at)))
     (> unix_time_now token_expires_at)))
-
 
 (defn get_tokens [token_file_name]
   (println "get_tokens")
   (when (no_stored_tokens token_file_name)
-    (authenticate "1234567" client_id)
-    (deref token_response_delivered_promise)) ; wait for callback
+    (authenticate "1234567")
+    (deref token_response_delivered_promise))
 
   (let [tokens (read_tokens token_file_name)]
     (if (is_token_expired tokens)
       (refresh_tokens tokens)
       tokens)))
+
+;; Account-based token operations (used by account-service)
+
+(defn refresh-account-tokens
+  "Refresh tokens for a specific account. Returns refreshed tokens.
+   store-fn should be (fn [tokens] ...) that persists the tokens."
+  [tokens store-fn]
+  (println "refresh_tokens for account")
+  (try
+    (let [token_response_json (refresh_token_request tokens)
+          new-tokens (-> token_response_json
+                         token_response2token
+                         add_token_expires_at)]
+      (store-fn new-tokens)
+      new-tokens)
+    (catch clojure.lang.ExceptionInfo e
+      (let [data (ex-data e)
+            body (try (json/read-str (:body data) :key-fn keyword) (catch Exception _ nil))]
+        (if (and (= 400 (:status data)) body)
+          (throw (ex-info (str "Token refresh failed: " (:error_description body))
+                          {:type :token-expired}))
+          (throw e))))))
+
+(defn get-tokens-for-account
+  "Get valid tokens for an account. Refreshes if expired.
+   load-fn: (fn [] tokens-map)
+   store-fn: (fn [tokens] ...)"
+  [load-fn store-fn]
+  (let [tokens (load-fn)]
+    (if (and tokens (not (is_token_expired tokens)))
+      tokens
+      (when tokens
+        (refresh-account-tokens tokens store-fn)))))

@@ -19,6 +19,8 @@
   com.cognitect.aws/endpoints {:mvn/version "1.1.12.772"}
     ;; com.cognitect.aws/s3        {:mvn/version "869.2.1687.0"}
   com.cognitect.aws/dynamodb  {:mvn/version "847.2.1365.0"}
+  buddy/buddy-hashers {:mvn/version "2.0.167"}
+  buddy/buddy-sign {:mvn/version "3.5.351"}
   }
  :mvn/repos
  {"central"   {:url "https://repo1.maven.org/maven2/"}}

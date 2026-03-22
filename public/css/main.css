@@ -20422,6 +20422,11 @@ video {
   animation: bounce 1s infinite;
 }
 
+a.cursor-pointer:hover,
+.button-class:hover {
+  text-decoration: underline;
+}
+
 div.tooltip-barchart {
   position: absolute;
   text-align: center;

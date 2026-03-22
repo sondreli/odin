@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+a.cursor-pointer:hover,
+.button-class:hover {
+    text-decoration: underline;
+}
+
 div.tooltip-barchart {
     position: absolute;
     text-align: center;
