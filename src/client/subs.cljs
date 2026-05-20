@@ -3,6 +3,26 @@
             [common.category-service :as category]))
 
 (reg-sub
+ :auth
+ (fn [db _]
+   (:auth db)))
+
+(reg-sub
+ :balance
+ (fn [db _]
+   (:balance db)))
+
+(reg-sub
+ :refreshing?
+ (fn [db _]
+   (:refreshing? db)))
+
+(reg-sub
+ :refresh-result
+ (fn [db _]
+   (:refresh-result db)))
+
+(reg-sub
  :loading  ;; usage: (subscribe [:loading])
  (fn [db _]
    (:loading db)))
@@ -70,16 +90,12 @@
 (reg-sub
  :show-categorized-transactions?
  (fn [db _]
-   (let [result (:show-categorized-transactions? db)]
-     (println "show-categorized-transactions? subscription called, result:" result)
-     result)))
+   (:show-categorized-transactions? db)))
 
 (reg-sub
  :show-uncategorized-transactions?
  (fn [db _]
-   (let [result (:show-uncategorized-transactions? db)]
-     (println "show-uncategorized-transactions? subscription called, result:" result)
-     result)))
+   (:show-uncategorized-transactions? db)))
 
 (reg-sub
  :active-menu
@@ -95,6 +111,11 @@
  :tags
  (fn [db _]
    (:tags db)))
+
+(reg-sub
+ :loans
+ (fn [db _]
+   (:loans db)))
 
 (reg-sub
  :period-transactions
@@ -120,3 +141,19 @@
  :accounts
  (fn [db _]
    (:accounts db)))
+
+(reg-sub
+ :multi-select
+ (fn [db _]
+   (:multi-select db)))
+
+(reg-sub
+ :selected-tag-id
+ (fn [db _]
+   (:selected-tag-id db)))
+
+(reg-sub
+ :selected-tag
+ (fn [db _]
+   (when-let [tid (:selected-tag-id db)]
+     (some #(when (= (:id %) tid) %) (:tags db)))))

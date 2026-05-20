@@ -3,7 +3,7 @@
 
 (defn stacked-barchart [displayed-transactions categories period chart-size]
   [:div
-   [:button {:on-click #(dispatch [:toggle-chart-size])} "Toggle positive kategorier"]
+   [:button {:on-click #(dispatch [:toggle-chart-size])} "Vis alle kategorier"]
    [:div
     {:id "mychart" :style {:height "800px"}}
     (dispatch [:draw-stacked-barchart displayed-transactions categories period chart-size])]])

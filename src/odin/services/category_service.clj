@@ -32,7 +32,11 @@
      :headers {"Content-Type" "application/json"}
      :body "{\"message\": \"Updated transactions with categories successfully\"}"}))
 
-(defn- attach-filters-to-categories [categories filters]
+(defn attach-filters-to-categories
+  "Pure join: take a list of categories and a list of filter records, and return
+   categories with their matching filters attached (under :filters, sorted by
+   :order-index)."
+  [categories filters]
   (let [filters-by-cat (group-by :category-id filters)]
     (mapv (fn [cat]
             (let [cat-filters (get filters-by-cat (:id cat) [])
@@ -40,14 +44,19 @@
               (assoc cat :filters sorted-filters)))
           categories)))
 
+(defn get-categories-with-filters
+  "Load the user's categories and filters from storage and return categories with
+   their filters attached. Use this anywhere the category record needs its
+   :filters populated — bare db2/get-categories only fills in :marker."
+  [user-id]
+  (attach-filters-to-categories (db2/get-categories user-id)
+                                (db2/get-filters user-id)))
+
 (defn categories-handler [request]
-  (let [user-id (:user-id request)
-        categories (db2/get-categories user-id)
-        filters (db2/get-filters user-id)
-        categories-with-filters (attach-filters-to-categories categories filters)]
+  (let [user-id (:user-id request)]
     {:status 200
      :headers {"Content-Type" "application/json"}
-     :body (json/write-str categories-with-filters)}))
+     :body (json/write-str (get-categories-with-filters user-id))}))
 
 (defn delete-category-handler [category-id request]
   (let [user-id (:user-id request)

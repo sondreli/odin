@@ -1,0 +1,15 @@
+{
+  "name": "odin-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "ios": "react-native run-ios"
+  },
+  "dependencies": {
+    "react": "^16.9.0",
+    "react-native": "0.84.1"
+  }
+}

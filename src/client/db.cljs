@@ -61,6 +61,7 @@
        :reports []
        :tags []
        :accounts []
+       :selected-tag-id nil
        :reports-period {:start (date/first-day-of-month month-index year)
                         :end (date/first-day-of-next-month month-index year)
                         :period-type :month}}))

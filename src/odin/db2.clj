@@ -1,11 +1,21 @@
 (ns odin.db2
-  (:require [cognitect.aws.client.api :as aws]
-            [clojure.data.json :as json]
+  (:require [clojure.data.json :as json]
             [clojure.string :as s]
             [clojure.edn :as edn]
             [odin.services.config-service :as config]
-            [odin.services.date-service :as date]
-            ))
+            [odin.services.date-service :as date])
+  (:import [software.amazon.awssdk.services.dynamodb DynamoDbClient DynamoDbClientBuilder]
+           [software.amazon.awssdk.services.dynamodb.model
+            AttributeValue
+            PutItemRequest
+            BatchWriteItemRequest WriteRequest PutRequest DeleteRequest
+            BatchGetItemRequest KeysAndAttributes
+            QueryRequest GetItemRequest DeleteItemRequest UpdateItemRequest
+            ScanRequest DynamoDbException]
+           [software.amazon.awssdk.http.urlconnection UrlConnectionHttpClient]
+           [software.amazon.awssdk.auth.credentials StaticCredentialsProvider AwsBasicCredentials]
+           [software.amazon.awssdk.regions Region]
+           [java.net URI]))
 
 (defn pr-edn-str [& xs]
   (binding [*print-length* nil
@@ -14,28 +24,71 @@
             *print-readably* true]
     (apply pr-str xs)))
 
+;;
+;; AWS SDK v2 client
+;;
+
 (def dynamodb-client
-  (if config/dynamodb-endpoint
-    (let [uri (java.net.URI. config/dynamodb-endpoint)]
-      (aws/client {:api :dynamodb
-                   :endpoint-override {:protocol (keyword (.getScheme uri))
-                                       :hostname (.getHost uri)
-                                       :port (.getPort uri)}}))
-    (aws/client {:api :dynamodb})))
+  (delay
+    (let [http-client (-> (UrlConnectionHttpClient/builder) (.build))
+          ^Region region (Region/of (or (System/getenv "AWS_REGION") "eu-west-1"))
+          ^DynamoDbClientBuilder builder (-> (DynamoDbClient/builder)
+                                             (.httpClient http-client)
+                                             (.region region))]
+      (if @config/dynamodb-endpoint
+        (-> builder
+            (.endpointOverride (URI. ^String @config/dynamodb-endpoint))
+            (.credentialsProvider
+              (StaticCredentialsProvider/create
+                (AwsBasicCredentials/create "local" "local")))
+            (.build))
+        (.build builder)))))
 
-(defn write-item
-  "Writes an item to the specified DynamoDB table.
 
-  Args:
-  - table-name: String, the name of the DynamoDB table.
-  - item: Map, where keys are attribute names and values are attribute values formatted
-          for DynamoDB (e.g., {:S \"string\"}, {:N \"number\"})."
-  [table-name item]
-  (let [request {:TableName table-name
-                 :Item item}
-        response (aws/invoke dynamodb-client {:op :PutItem :request request})]
-    ;; Return the response or handle errors as needed
-    response))
+;;
+;; Conversion helpers: Clojure maps <-> SDK v2 AttributeValue
+;;
+
+(defn- str->attr [s]
+  (-> (AttributeValue/builder) (.s s) (.build)))
+
+(defn- num->attr [n]
+  (-> (AttributeValue/builder) (.n (str n)) (.build)))
+
+(defn clj->attr-value
+  "Convert {:S \"x\"}, {:N \"42\"}, or {:BOOL true} to an AttributeValue."
+  [m]
+  (cond
+    (contains? m :S)    (str->attr (:S m))
+    (contains? m :N)    (num->attr (:N m))
+    (contains? m :BOOL) (-> (AttributeValue/builder) (.bool (boolean (:BOOL m))) (.build))
+    :else (throw (ex-info "Unknown attribute type" {:value m}))))
+
+(defn attr-value->clj
+  "Convert an AttributeValue back to {:S \"x\"}, {:N \"42\"}, or {:BOOL b}."
+  [^AttributeValue av]
+  (let [t (str (.type av))]
+    (case t
+      "S"    {:S (.s av)}
+      "N"    {:N (.n av)}
+      "BOOL" {:BOOL (.bool av)}
+      (throw (ex-info "Unsupported attribute type" {:type t})))))
+
+(defn clj-item->sdk-item
+  "Convert {:UserId {:S \"x\"}} to {\"UserId\" -> AttributeValue}."
+  [item]
+  (into {} (for [[k v] item]
+             [(name k) (clj->attr-value v)])))
+
+(defn sdk-item->clj-item
+  "Convert {\"UserId\" -> AttributeValue} to {:UserId {:S \"x\"}}."
+  [sdk-item]
+  (into {} (for [[k v] sdk-item]
+             [(keyword k) (attr-value->clj v)])))
+
+;;
+;; Data definitions (unchanged)
+;;
 
 (def transactions [
   {:user-id "xxx" :date 1733353200000, :amount -4568, :description "RUTERAPPEN", :db-id 79164837202750, :index 3, :levenshtein 0}
@@ -50,18 +103,16 @@
                       {:UserId {:S "xxx"}, :Timestamp {:N "1733439600001"}, :Description {:S "RUTERAPPEN"}, :Amount {:N "0"}}])
 
 (defn pad-left
-  "Pads a string with a character to the specified length."
   [input-str length pad-char]
   (let [s (str input-str)
-        fmt (str "%" length "s")  ; e.g., "%16s" for length 16
-        padded (format fmt s)]    ; Pads with spaces
+        fmt (str "%" length "s")
+        padded (format fmt s)]
     (s/replace-first padded #"^ *" (s/join (repeat (- length (count s)) pad-char)))))
 
-; what am I trying to do? Input all data
-; nil -> should not be added
-; required: user-id, date, amount
-; default value:
-;              Name                   DB-name             Type  Required Alter value
+;;
+;; Config maps: [clj-key db-key db-type required? transform-fn]
+;;
+
 (def transaction-config [[:user-id              :UserId              :S    true  identity]
                          [:date                 :Timestamp           :S    true  +]
                          [:description          :Description         :S    false identity]
@@ -93,6 +144,19 @@
                     [:order-index  :OrderIndex  :N]
                     [:tag-ids      :TagIds      :S]])
 
+(def loan-config [[:user-id         :UserId         :S]
+                  [:id              :Id             :S]
+                  [:name            :Name           :S]
+                  [:nominal-rate    :NominalRate    :N]
+                  [:balance         :Balance        :N]
+                  [:monthly-payment :MonthlyPayment :N]
+                  [:monthly-fee     :MonthlyFee     :N]
+                  [:original-amount :OriginalAmount :N]
+                  [:filter-text     :FilterText     :S]
+                  [:filter-texts    :FilterTexts    :S]
+                  [:interest-method :InterestMethod :S]
+                  [:payment-history :PaymentHistory :S]])
+
 (def report-config [[:user-id      :UserId      :S]
                     [:id           :Id          :S]
                     [:name         :Name        :S]
@@ -109,45 +173,53 @@
 (def filter-table-name "Filter")
 (def user-table-name "User")
 (def account-table-name "Account")
+(def loan-table-name "Loan")
 
 ;;
 ;;  Write to database
 ;;
-(defn write-batch-items ; only 25 items in each request
-  "Writes multiple items to the specified DynamoDB table in batch mode.
-  Args:
-  - table-name: String, the name of the DynamoDB table.
-  - items: List of Maps, where each map represents an item in DynamoDB format."
+
+(defn write-item
+  [table-name item]
+  (let [^PutItemRequest req (-> (PutItemRequest/builder)
+                                (.tableName table-name)
+                                (.item (clj-item->sdk-item item))
+                                (.build))]
+    (.putItem ^DynamoDbClient @dynamodb-client req)))
+
+(defn write-batch-items
   [table-name items]
-  ;; (println items)
-  (let [
-        request {:RequestItems {table-name
-                                (mapv (fn [item] {:PutRequest {:Item item}}) items)}}
-        ;; _ (println (json/write-str request))
-        response (aws/invoke dynamodb-client {:op :BatchWriteItem :request request})]
-    response))
+  (let [write-requests (mapv (fn [item]
+                               (let [^PutRequest pr (-> (PutRequest/builder)
+                                                        (.item (clj-item->sdk-item item))
+                                                        (.build))]
+                                 (-> (WriteRequest/builder)
+                                     (.putRequest pr)
+                                     (.build))))
+                             items)
+        ^BatchWriteItemRequest request (-> (BatchWriteItemRequest/builder)
+                                         (.requestItems {table-name write-requests})
+                                         (.build))]
+    (.batchWriteItem ^DynamoDbClient @dynamodb-client request)))
 
 (defn write-items-to-db [table-name items]
-  ;; (println "Items to write:" items)
-  (let [result (write-batch-items table-name items)]
-    ;; (println "Batch Write Result:" result)
-    (if (and (contains? result :cognitect.aws.http/status)
-             (-> result :cognitect.aws.http/status (>= 400)))
-      (do
-        (println "Error writing to DynamoDB:" result)
-        (when (= (:cognitect.anomalies/category result) :cognitect.anomalies/incorrect)
-          (println "ValidationException occurred. Problematic items:" items))
-        result)
-      (do
-        (when (contains? result :UnprocessedItems)
-          (println "Warning: Some items were not processed:" (:UnprocessedItems result))
-          ;;(println "All items written successfully")
-          )
-        result))))
+  (try
+    (let [result (write-batch-items table-name items)]
+      (when (.hasUnprocessedItems result)
+        (println "Warning: Some items were not processed:" (.unprocessedItems result)))
+      result)
+    (catch DynamoDbException e
+      (println "Error writing to DynamoDB:" (.getMessage e))
+      (println "Problematic items:" items)
+      (throw e))))
 
 (defn store-items [table-name items]
   (let [item-groups (partition 25 25 nil items)]
     (doall (map #(write-items-to-db table-name %) item-groups))))
+
+;;
+;; Item conversion helpers (unchanged logic)
+;;
 
 (defn date->sortkey [date date-index]
   (str (pad-left date 16 "0") "#" (pad-left date-index 4 "0")))
@@ -171,148 +243,132 @@
 (defn store-transactions [transactions]
   (let [db-transactions (transactions->db-transactions transactions)
         _ (println "Converted to db-transactions count:" (count db-transactions))
-        _ (println "Sample db-transaction:" (first db-transactions))
-        ;db-transaction-groups (partition 25 25 nil db-transactions)
-        ]
-    ;; (doall (map #(write-transactions-to-db transaction-table-name %) db-transaction-groups))
+        _ (println "Sample db-transaction:" (first db-transactions))]
     (let [store-result (store-items transaction-table-name db-transactions)]
     transactions)))
+
 ;;
 ;;  Store category
 ;;
 
 (defn store-category [category]
-  ; do pre transformation of marker?
   (let [db-category (item->db-item category-config category)]
     (store-items category-table-name [db-category])))
 
 ;;
-;; Update transactions
-;;
-
-;; (defn update-transactions [transactions]
-;;   (let [; map to db types
-;;         db-transactions (map #(item->db-item transaction-config %) transactions)
-;;         _ (store-items transaction-table-name db-transactions)
-;;         ]))
-
-
-;;
 ;; Delete transactions
 ;;
+
+(defn delete-item
+  "Delete a single item from a DynamoDB table. key-map is in Clojure format,
+   e.g. {:UserId {:S \"x\"} :Timestamp {:S \"y\"}}."
+  [table-name key-map]
+  (let [^DeleteItemRequest req (-> (DeleteItemRequest/builder)
+                                   (.tableName table-name)
+                                   (.key (clj-item->sdk-item key-map))
+                                   (.build))]
+    (.deleteItem ^DynamoDbClient @dynamodb-client req)))
+
 (defn delete-transactions
-  "Deletes multiple items from a DynamoDB table using BatchWriteItem.
-   - table-name: String name of the DynamoDB table.
-   - items: List of maps, each containing :pk (partition key, string) and :sk (sort key, string).
-   Handles batching in groups of 25 and retries unprocessed items."
   [transactions]
   (let [max-batch-size 25
         table-name transaction-table-name
-        prepare-request (fn [[pk sk]]
-                          {:DeleteRequest
-                           {:Key {:UserId    pk
-                                  :Timestamp sk}}})
-        partition-and-sort-keys (->> transactions 
+        partition-and-sort-keys (->> transactions
                                      transactions->db-transactions
                                      (map #(vector (:UserId %) (:Timestamp %))))
-        requests (map prepare-request partition-and-sort-keys)]
-
-    ;; Function to process a batch and handle unprocessed items recursively
-    (letfn [(process-batch [batch-request]
-              (let [response (aws/invoke dynamodb-client {:op :BatchWriteItem :request batch-request})
-                    unprocessed (get-in response [:UnprocessedItems table-name])]
+        write-requests (mapv (fn [[pk sk]]
+                               (let [^DeleteRequest dr (-> (DeleteRequest/builder)
+                                                           (.key {"UserId"    (clj->attr-value pk)
+                                                                  "Timestamp" (clj->attr-value sk)})
+                                                           (.build))]
+                                 (-> (WriteRequest/builder)
+                                     (.deleteRequest dr)
+                                     (.build))))
+                             partition-and-sort-keys)]
+    (letfn [(process-batch [reqs]
+              (let [batch-req (-> (BatchWriteItemRequest/builder)
+                                 (.requestItems {table-name (vec reqs)})
+                                 (.build))
+                    response (.batchWriteItem ^DynamoDbClient @dynamodb-client ^BatchWriteItemRequest batch-req)
+                    unprocessed (get (.unprocessedItems response) table-name)]
                 (when (seq unprocessed)
-                  (process-batch {:RequestItems {table-name unprocessed}}))))]
-
-      ;; Partition requests into batches and process each
-      (doseq [group (partition-all max-batch-size requests)]
-        (process-batch {:RequestItems {table-name group}}))))
-  ;; Return nil or a success message if needed
+                  (process-batch unprocessed))))]
+      (doseq [group (partition-all max-batch-size write-requests)]
+        (process-batch group))))
   nil)
 
 ;;
 ;;  Read from database
 ;;
-(defn read-batch-items
-  "Reads multiple items from the specified DynamoDB table using their primary keys.
 
-  Args:
-  - table-name: String, the name of the DynamoDB table.
-  - keys: List of Maps, where each map represents the primary key of an item."
-  [table-name keys]
-  (let [request {:RequestItems {table-name {:Keys keys}}}
-                                _ (println "read-batch-items: " request)
-        response (aws/invoke dynamodb-client {:op :BatchGetItem :request request})]
-        (println response)
+(defn read-batch-items
+  [table-name key-items]
+  (let [sdk-keys (mapv clj-item->sdk-item key-items)
+        keys-and-attrs (-> (KeysAndAttributes/builder)
+                           (.keys sdk-keys)
+                           (.build))
+        request (-> (BatchGetItemRequest/builder)
+                    (.requestItems {table-name keys-and-attrs})
+                    (.build))
+        response (.batchGetItem ^DynamoDbClient @dynamodb-client ^BatchGetItemRequest request)]
+    (println response)
     response))
 
 (defn query-all-items
   [table-name partition-key partition-value]
-  (let [; Construct the query parameters
-        query-params {:TableName table-name
-                      :KeyConditionExpression "#pk = :v"
-                      :ExpressionAttributeNames {"#pk" partition-key}
-                      :ExpressionAttributeValues {":v" partition-value}}]
-
-    (try
-      (let [result (aws/invoke dynamodb-client {:op :Query :request query-params})
-            _ (println "query-all-items: " result)
-            items (:Items result)]
-        ;(map #(get % attribute-name) items)
-        items)
-      (catch Exception e
-        (println "An error occurred while querying DynamoDB:" (.getMessage e))
-        nil))))
+  (try
+    (let [request (-> (QueryRequest/builder)
+                      (.tableName table-name)
+                      (.keyConditionExpression "#pk = :v")
+                      (.expressionAttributeNames {"#pk" partition-key})
+                      (.expressionAttributeValues {":v" (clj->attr-value partition-value)})
+                      (.build))
+          result (.query ^DynamoDbClient @dynamodb-client ^QueryRequest request)]
+      (map sdk-item->clj-item (.items result)))
+    (catch Exception e
+      (println "An error occurred while querying DynamoDB:" (.getMessage e))
+      nil)))
 
 (defn query-items-greater-than
   [table-name partition-key-name partition-key-value sort-key-name sort-key-value]
   (println sort-key-value)
-  (let [request {:TableName table-name
-                 :KeyConditionExpression "#pk = :partitionval AND #sk > :sortval"
-                 :ExpressionAttributeValues {":partitionval" partition-key-value
-                                             ":sortval" sort-key-value}
-                 :ExpressionAttributeNames {"#pk" partition-key-name
-                                            "#sk" sort-key-name}}
-        _ (println "query-items-greater-than: " request)
-        response (aws/invoke dynamodb-client {:op :Query :request request})]
-    (:Items response)))
+  (let [request (-> (QueryRequest/builder)
+                    (.tableName table-name)
+                    (.keyConditionExpression "#pk = :partitionval AND #sk > :sortval")
+                    (.expressionAttributeValues {":partitionval" (clj->attr-value partition-key-value)
+                                                 ":sortval"      (clj->attr-value sort-key-value)})
+                    (.expressionAttributeNames {"#pk" partition-key-name
+                                                "#sk" sort-key-name})
+                    (.build))
+        response (.query ^DynamoDbClient @dynamodb-client ^QueryRequest request)]
+    (map sdk-item->clj-item (.items response))))
 
 (defn query-items-greater-than2
-  "Queries DynamoDB with pagination to retrieve all items matching the condition.
-   - table-name: DynamoDB table name.
-   - partition-key-name: Name of the partition key attribute.
-   - sort-key-name: Name of the sort key attribute.
-   - partition-key-value: Value of the partition key.
-   - sort-key-value: Sort key value for the > condition (e.g., timestamp or formatted sort key)."
   [table-name partition-key-name partition-key-value sort-key-name sort-key-value attributes retrieve-all?]
   (let [attr-names (into {} (map (fn [attr] [(str "#attr_" attr) attr]) attributes))
-        projection-expr (s/join ", " (keys attr-names))]
+        projection-expr (s/join ", " (keys attr-names))
+        expr-attr-names (merge {"#pk" partition-key-name "#sk" sort-key-name} attr-names)
+        expr-attr-values {":partitionval" (str->attr partition-key-value)
+                          ":sortval"      (str->attr sort-key-value)}]
     (loop [items []
            last-key nil
            iteration 0]
       (let [start-time (System/currentTimeMillis)
-            query-params (merge
-                          {:TableName table-name
-                           :KeyConditionExpression "#pk = :partitionval AND #sk > :sortval"
-                           :ExpressionAttributeNames (merge {"#pk" partition-key-name
-                                                             "#sk" sort-key-name}
-                                                            attr-names)
-                           :ExpressionAttributeValues {":partitionval" {:S partition-key-value}
-                                                       ":sortval" {:S sort-key-value}}
-                           :ProjectionExpression projection-expr}
-                          (when last-key
-                            {:ExclusiveStartKey last-key}))
-            ;; _ (println "query-items-greater-than2 query-params: " query-params)
-          ;response (ddb/query query-params)
-            response (aws/invoke dynamodb-client {:op :Query :request query-params})
-            new-items (concat items (:Items response))
+            builder (-> (QueryRequest/builder)
+                        (.tableName table-name)
+                        (.keyConditionExpression "#pk = :partitionval AND #sk > :sortval")
+                        (.expressionAttributeNames expr-attr-names)
+                        (.expressionAttributeValues expr-attr-values)
+                        (.projectionExpression projection-expr))
+            builder (if last-key (.exclusiveStartKey builder last-key) builder)
+            ^QueryRequest req (.build builder)
+            response (.query ^DynamoDbClient @dynamodb-client req)
+            response-items (map sdk-item->clj-item (.items response))
+            new-items (concat items response-items)
             elapsed-time (- (System/currentTimeMillis) start-time)]
-        (println "Query iteration" iteration "- Retrieved" (count (:Items response)) "items in" elapsed-time "ms")
-        ;; (println "query-items-greater-than2: " response)
-        ;; (when (:LastEvaluatedKey response)
-        ;;   (println "query-items-greater-than2 last-evaluated-key: " (:LastEvaluatedKey response)))
-        (if (and (:LastEvaluatedKey response) retrieve-all?)
-          (recur new-items (:LastEvaluatedKey response) (inc iteration))
+        (println "Query iteration" iteration "- Retrieved" (count response-items) "items in" elapsed-time "ms")
+        (if (and (.hasLastEvaluatedKey response) retrieve-all?)
+          (recur new-items (.lastEvaluatedKey response) (inc iteration))
           (do
             (println "Query completed - Total items:" (count new-items) "in" (inc iteration) "iterations")
             new-items))))))
@@ -321,7 +377,7 @@
   (if-let [db-val (get m db-key)]
     (let [val-trans-fx (case db-type
                          :S identity
-                         :N #(Double. %)
+                         :N #(Double/parseDouble %)
                          identity)
         value (-> m (get db-key) (get db-type) val-trans-fx)]
     (-> m
@@ -349,14 +405,32 @@
        (map split-composite-sortkey-date)
        (map #(-> % (parse-edn-field :tag-ids) (parse-edn-field :filter-tag-ids)))))
 
-;; (db-transactions->transactions db-transactions)
-
 (defn iso-date->sortkey [iso-date]
   (-> iso-date
       (str "T00:00:00")
       (date/localtime->unixtime)
       (pad-left 16 "0")
       (str "#0000")))
+
+(defn get-latest-transaction-date
+  "Returns the ISO date string of the most recent transaction, or nil if none exist."
+  [user-id]
+  (let [req (-> (QueryRequest/builder)
+                (.tableName transaction-table-name)
+                (.keyConditionExpression "#pk = :partitionval")
+                (.expressionAttributeNames {"#pk" "UserId" "#ts" "Timestamp"})
+                (.expressionAttributeValues {":partitionval" (str->attr user-id)})
+                (.projectionExpression "#ts")
+                (.scanIndexForward false)
+                (.limit (int 1))
+                (.build))
+        response (.query ^DynamoDbClient @dynamodb-client req)
+        items (.items response)]
+    (when (seq items)
+      (let [timestamp-str (-> items first (.get "Timestamp") .s)
+            ;; Timestamp is "unixtime#dateindex", extract unixtime
+            unixtime (Long/parseLong (first (clojure.string/split timestamp-str #"#")))]
+        (date/unixtime->iso-date unixtime)))))
 
 (defn get-transactions-after [user-id iso-date retrieve-all?]
   (println "=== get-transactions-after ===")
@@ -396,14 +470,8 @@
 ;; Delete entry
 ;;
 
-; hmm, should also delete the category from all transactsions
-; update the transactions in frontend, then pass all the updates to store-transactions
 (defn delete-category [user-id category-id]
-  (aws/invoke dynamodb-client
-              {:op :DeleteItem
-               :request {:TableName category-table-name
-                         :Key {:UserId {:S user-id}
-                               :Id {:S category-id}}}}))
+  (delete-item category-table-name {:UserId {:S user-id} :Id {:S category-id}}))
 
 ;;
 ;; Reports
@@ -419,11 +487,7 @@
          (map #(reduce translate-key-val % report-config)))))
 
 (defn delete-report [user-id report-id]
-  (aws/invoke dynamodb-client
-              {:op :DeleteItem
-               :request {:TableName report-table-name
-                         :Key {:UserId {:S user-id}
-                               :Id {:S report-id}}}}))
+  (delete-item report-table-name {:UserId {:S user-id} :Id {:S report-id}}))
 
 ;;
 ;; Tags
@@ -439,11 +503,25 @@
          (map #(reduce translate-key-val % tag-config)))))
 
 (defn delete-tag [user-id tag-id]
-  (aws/invoke dynamodb-client
-              {:op :DeleteItem
-               :request {:TableName tag-table-name
-                         :Key {:UserId {:S user-id}
-                               :Id {:S tag-id}}}}))
+  (delete-item tag-table-name {:UserId {:S user-id} :Id {:S tag-id}}))
+
+;;
+;; Loans
+;;
+
+(defn store-loan [loan]
+  (let [db-loan (item->db-item loan-config loan)]
+    (store-items loan-table-name [db-loan])))
+
+(defn get-loans [user-id]
+  (let [db-loans (query-all-items loan-table-name "UserId" {:S user-id})]
+    (->> db-loans
+         (map #(reduce translate-key-val % loan-config))
+         (map #(parse-edn-field % :payment-history))
+         (map #(parse-edn-field % :filter-texts)))))
+
+(defn delete-loan [user-id loan-id]
+  (delete-item loan-table-name {:UserId {:S user-id} :Id {:S loan-id}}))
 
 ;;
 ;; Filters
@@ -478,11 +556,7 @@
          (map translate-filter-tag-ids))))
 
 (defn delete-filter [user-id filter-id]
-  (aws/invoke dynamodb-client
-              {:op :DeleteItem
-               :request {:TableName filter-table-name
-                         :Key {:UserId {:S user-id}
-                               :Id {:S filter-id}}}}))
+  (delete-item filter-table-name {:UserId {:S user-id} :Id {:S filter-id}}))
 
 (defn delete-filters-by-category [user-id category-id]
   (let [all-filters (get-filters user-id)
@@ -490,11 +564,10 @@
     (doseq [f category-filters]
       (delete-filter user-id (:id f)))))
 
-;; Function to list items from a DynamoDB table
 (defn list-items [table-name]
-  (let [request {:TableName table-name}
-        response (aws/invoke dynamodb-client {:op :Scan :request request})]
-    (map #(into {} %) (:Items response))))
+  (let [request (-> (ScanRequest/builder) (.tableName table-name) (.build))
+        response (.scan ^DynamoDbClient @dynamodb-client ^ScanRequest request)]
+    (map sdk-item->clj-item (.items response))))
 
 ;;
 ;; Users
@@ -508,35 +581,40 @@
                :CreatedAt    {:S created-at}}))
 
 (defn get-user-by-id [user-id]
-  (let [response (aws/invoke dynamodb-client
-                             {:op :GetItem
-                              :request {:TableName user-table-name
-                                        :Key {:UserId {:S user-id}}}})]
-    (when-let [item (:Item response)]
-      {:user-id       (get-in item [:UserId :S])
-       :email         (get-in item [:Email :S])
-       :password-hash (get-in item [:PasswordHash :S])
-       :created-at    (get-in item [:CreatedAt :S])})))
+  (let [request (-> (GetItemRequest/builder)
+                    (.tableName user-table-name)
+                    (.key {"UserId" (str->attr user-id)})
+                    (.build))
+        response (.getItem ^DynamoDbClient @dynamodb-client ^GetItemRequest request)]
+    (when (seq (.item response))
+      (let [item (sdk-item->clj-item (.item response))]
+        {:user-id       (get-in item [:UserId :S])
+         :email         (get-in item [:Email :S])
+         :password-hash (get-in item [:PasswordHash :S])
+         :created-at    (get-in item [:CreatedAt :S])}))))
 
 (defn get-user-by-email [email]
-  (let [response (aws/invoke dynamodb-client
-                             {:op :Query
-                              :request {:TableName user-table-name
-                                        :IndexName "EmailIndex"
-                                        :KeyConditionExpression "#e = :email"
-                                        :ExpressionAttributeNames {"#e" "Email"}
-                                        :ExpressionAttributeValues {":email" {:S email}}}})]
-    (when-let [item (first (:Items response))]
-      {:user-id       (get-in item [:UserId :S])
-       :email         (get-in item [:Email :S])
-       :password-hash (get-in item [:PasswordHash :S])
-       :created-at    (get-in item [:CreatedAt :S])})))
+  (let [request (-> (QueryRequest/builder)
+                    (.tableName user-table-name)
+                    (.indexName "EmailIndex")
+                    (.keyConditionExpression "#e = :email")
+                    (.expressionAttributeNames {"#e" "Email"})
+                    (.expressionAttributeValues {":email" (str->attr email)})
+                    (.build))
+        response (.query ^DynamoDbClient @dynamodb-client ^QueryRequest request)]
+    (when-let [sdk-item (first (.items response))]
+      (let [item (sdk-item->clj-item sdk-item)]
+        {:user-id       (get-in item [:UserId :S])
+         :email         (get-in item [:Email :S])
+         :password-hash (get-in item [:PasswordHash :S])
+         :created-at    (get-in item [:CreatedAt :S])}))))
 
 ;;
 ;; Accounts (bank connections)
 ;;
 
 (defn put-account [{:keys [user-id account-id provider account-name
+                           client-id client-secret redirect-uri
                            token-data bank-account-key created-at]}]
   (write-item account-table-name
               (cond-> {:UserId    {:S user-id}
@@ -544,65 +622,86 @@
                        :Provider  {:S provider}
                        :CreatedAt {:S created-at}}
                 account-name     (assoc :AccountName    {:S account-name})
+                client-id        (assoc :ClientId       {:S client-id})
+                client-secret    (assoc :ClientSecret   {:S client-secret})
+                redirect-uri     (assoc :RedirectUri    {:S redirect-uri})
                 token-data       (assoc :TokenData      {:S token-data})
                 bank-account-key (assoc :BankAccountKey  {:S bank-account-key}))))
 
 (defn get-accounts-for-user [user-id]
-  (let [items (:Items (aws/invoke dynamodb-client
-                                  {:op :Query
-                                   :request {:TableName account-table-name
-                                             :KeyConditionExpression "#uid = :uid"
-                                             :ExpressionAttributeNames {"#uid" "UserId"}
-                                             :ExpressionAttributeValues {":uid" {:S user-id}}}}))]
+  (let [request (-> (QueryRequest/builder)
+                    (.tableName account-table-name)
+                    (.keyConditionExpression "#uid = :uid")
+                    (.expressionAttributeNames {"#uid" "UserId"})
+                    (.expressionAttributeValues {":uid" (str->attr user-id)})
+                    (.build))
+        response (.query ^DynamoDbClient @dynamodb-client ^QueryRequest request)
+        items (map sdk-item->clj-item (.items response))]
     (mapv (fn [item]
             (cond-> {:user-id    (get-in item [:UserId :S])
                      :account-id (get-in item [:AccountId :S])
                      :provider   (get-in item [:Provider :S])
                      :created-at (get-in item [:CreatedAt :S])}
               (get item :AccountName)    (assoc :account-name    (get-in item [:AccountName :S]))
+              (get item :ClientId)       (assoc :client-id       (get-in item [:ClientId :S]))
+              (get item :ClientSecret)   (assoc :client-secret   (get-in item [:ClientSecret :S]))
+              (get item :RedirectUri)    (assoc :redirect-uri    (get-in item [:RedirectUri :S]))
               (get item :TokenData)      (assoc :token-data      (get-in item [:TokenData :S]))
               (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S]))))
           items)))
 
 (defn get-account [user-id account-id]
-  (let [response (aws/invoke dynamodb-client
-                             {:op :GetItem
-                              :request {:TableName account-table-name
-                                        :Key {:UserId    {:S user-id}
-                                              :AccountId {:S account-id}}}})]
-    (when-let [item (:Item response)]
-      (cond-> {:user-id    (get-in item [:UserId :S])
-               :account-id (get-in item [:AccountId :S])
-               :provider   (get-in item [:Provider :S])
-               :created-at (get-in item [:CreatedAt :S])}
-        (get item :AccountName)    (assoc :account-name    (get-in item [:AccountName :S]))
-        (get item :TokenData)      (assoc :token-data      (get-in item [:TokenData :S]))
-        (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S]))))))
+  (let [request (-> (GetItemRequest/builder)
+                    (.tableName account-table-name)
+                    (.key {"UserId"    (str->attr user-id)
+                           "AccountId" (str->attr account-id)})
+                    (.build))
+        response (.getItem ^DynamoDbClient @dynamodb-client ^GetItemRequest request)]
+    (when (seq (.item response))
+      (let [item (sdk-item->clj-item (.item response))]
+        (cond-> {:user-id    (get-in item [:UserId :S])
+                 :account-id (get-in item [:AccountId :S])
+                 :provider   (get-in item [:Provider :S])
+                 :created-at (get-in item [:CreatedAt :S])}
+          (get item :AccountName)    (assoc :account-name    (get-in item [:AccountName :S]))
+          (get item :ClientId)       (assoc :client-id       (get-in item [:ClientId :S]))
+          (get item :ClientSecret)   (assoc :client-secret   (get-in item [:ClientSecret :S]))
+          (get item :RedirectUri)    (assoc :redirect-uri    (get-in item [:RedirectUri :S]))
+          (get item :TokenData)      (assoc :token-data      (get-in item [:TokenData :S]))
+          (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S])))))))
 
 (defn update-account-tokens [user-id account-id token-data-json]
-  (aws/invoke dynamodb-client
-              {:op :UpdateItem
-               :request {:TableName account-table-name
-                         :Key {:UserId    {:S user-id}
-                               :AccountId {:S account-id}}
-                         :UpdateExpression "SET TokenData = :td"
-                         :ExpressionAttributeValues {":td" {:S token-data-json}}}}))
+  (let [req ^UpdateItemRequest (-> (UpdateItemRequest/builder)
+                                   (.tableName account-table-name)
+                                   (.key {"UserId"    (str->attr user-id)
+                                          "AccountId" (str->attr account-id)})
+                                   (.updateExpression "SET TokenData = :td")
+                                   (.expressionAttributeValues {":td" (str->attr token-data-json)})
+                                   (.build))]
+    (.updateItem ^DynamoDbClient @dynamodb-client ^UpdateItemRequest req)))
+
+(defn update-account-client-secret [user-id account-id client-secret]
+  (let [req ^UpdateItemRequest (-> (UpdateItemRequest/builder)
+                                   (.tableName account-table-name)
+                                   (.key {"UserId"    (str->attr user-id)
+                                          "AccountId" (str->attr account-id)})
+                                   (.updateExpression "SET ClientSecret = :cs")
+                                   (.expressionAttributeValues {":cs" (str->attr client-secret)})
+                                   (.build))]
+    (.updateItem ^DynamoDbClient @dynamodb-client ^UpdateItemRequest req)))
 
 (defn update-account-bank-key [user-id account-id bank-account-key]
-  (aws/invoke dynamodb-client
-              {:op :UpdateItem
-               :request {:TableName account-table-name
-                         :Key {:UserId    {:S user-id}
-                               :AccountId {:S account-id}}
-                         :UpdateExpression "SET BankAccountKey = :bk"
-                         :ExpressionAttributeValues {":bk" {:S bank-account-key}}}}))
+  (let [req ^UpdateItemRequest (-> (UpdateItemRequest/builder)
+                                   (.tableName account-table-name)
+                                   (.key {"UserId"    (str->attr user-id)
+                                          "AccountId" (str->attr account-id)})
+                                   (.updateExpression "SET BankAccountKey = :bk")
+                                   (.expressionAttributeValues {":bk" (str->attr bank-account-key)})
+                                   (.build))]
+    (.updateItem ^DynamoDbClient @dynamodb-client ^UpdateItemRequest req)))
 
 (defn delete-account [user-id account-id]
-  (aws/invoke dynamodb-client
-              {:op :DeleteItem
-               :request {:TableName account-table-name
-                         :Key {:UserId    {:S user-id}
-                               :AccountId {:S account-id}}}}))
+  (delete-item account-table-name {:UserId {:S user-id} :AccountId {:S account-id}}))
 
 ;;
 ;; Scan table (used for migration)
@@ -610,45 +709,38 @@
 
 (defn scan-table-for-user [table-name user-id]
   (loop [items [] last-key nil]
-    (let [request (cond-> {:TableName table-name
-                           :FilterExpression "UserId = :uid"
-                           :ExpressionAttributeValues {":uid" {:S user-id}}}
-                    last-key (assoc :ExclusiveStartKey last-key))
-          response (aws/invoke dynamodb-client {:op :Scan :request request})
-          all-items (concat items (:Items response))]
-      (if (:LastEvaluatedKey response)
-        (recur all-items (:LastEvaluatedKey response))
+    (let [builder (-> (ScanRequest/builder)
+                      (.tableName table-name)
+                      (.filterExpression "UserId = :uid")
+                      (.expressionAttributeValues {":uid" (str->attr user-id)}))
+          builder (if last-key (.exclusiveStartKey builder last-key) builder)
+          req ^ScanRequest (.build builder)
+          response (.scan ^DynamoDbClient @dynamodb-client ^ScanRequest req)
+          new-items (map sdk-item->clj-item (.items response))
+          all-items (concat items new-items)]
+      (if (.hasLastEvaluatedKey response)
+        (recur all-items (.lastEvaluatedKey response))
         (vec all-items)))))
 
 (defn- delete-all-items-for-user
-  "Delete all items in a table for a given user. pk-attr and sk-attr are the
-   keyword attribute names for the partition and sort keys."
   [table-name pk-attr sk-attr user-id]
   (let [items (scan-table-for-user table-name user-id)]
     (doseq [item items]
-      (let [key (cond-> {pk-attr (get item pk-attr)}
-                  sk-attr (assoc sk-attr (get item sk-attr)))]
-        (aws/invoke dynamodb-client
-                    {:op :DeleteItem
-                     :request {:TableName table-name :Key key}})))
+      (let [key-map (cond-> {pk-attr (get item pk-attr)}
+                      sk-attr (assoc sk-attr (get item sk-attr)))]
+        (delete-item table-name key-map)))
     (count items)))
 
 (defn delete-all-user-data
-  "Delete all data belonging to a user across all tables, then delete the user record."
   [user-id]
   (let [counts (atom {})]
     (swap! counts assoc "Transaction" (delete-all-items-for-user transaction-table-name :UserId :Timestamp user-id))
     (swap! counts assoc "Category" (delete-all-items-for-user category-table-name :UserId :Id user-id))
     (swap! counts assoc "Report" (delete-all-items-for-user report-table-name :UserId :Id user-id))
     (swap! counts assoc "Tag" (delete-all-items-for-user tag-table-name :UserId :Id user-id))
+    (swap! counts assoc "Loan" (delete-all-items-for-user loan-table-name :UserId :Id user-id))
     (swap! counts assoc "Filter" (delete-all-items-for-user filter-table-name :UserId :Id user-id))
     (swap! counts assoc "Account" (delete-all-items-for-user account-table-name :UserId :AccountId user-id))
-    (aws/invoke dynamodb-client
-                {:op :DeleteItem
-                 :request {:TableName user-table-name
-                           :Key {:UserId {:S user-id}}}})
+    (delete-item user-table-name {:UserId {:S user-id}})
     (swap! counts assoc "User" 1)
     @counts))
-
-(defn -main [& args]
-  (println "db2 main"))

@@ -1,21 +1,39 @@
 (ns odin.services.transaction-service
   (:require [clojure.data.json :as json]
-            [clojure.tools.trace :as trace]
             [clojure.string :as s]
             [clojure.pprint :as pp]
-            [clojure.java.io :as io]
-            [clj-http.client :as client]
-            ;; [datomic.client.api :as d]
-            ;; [odin.db :as db]
             [odin.db2 :as db2]
             [common.category-service :as category]
+            [common.loan-service :as loan-svc]
             [odin.services.date-service :as date]
             [odin.services.auth-service :as auth]
             [odin.services.account-service :as account-svc]
             [odin.services.merge-service :as merge]
-            [clojure.test :as test :refer [deftest is do-report]]
-            ;[odin.services.transaction-service :as transaction]
-            ))
+            [odin.services.http-service :as http]
+            [odin.services.loan-service :as loans]
+            [odin.services.category-service :as category-svc]
+            [cognitect.transit :as transit])
+  (:import [java.io ByteArrayOutputStream]))
+
+(defn- extend-loan-histories!
+  "For each of the user's loans whose filters match anything in the supplied
+   delta-txns, run the incremental extend-payment-history and write back when
+   the history actually changed. Each loan is processed independently; a failure
+   on one loan logs but does not abort the others or the surrounding request."
+  [user-id delta-txns]
+  (try
+    (doseq [loan (db2/get-loans user-id)]
+      (try
+        (when-let [matching-delta (loans/matching-txns-for-loan loan delta-txns)]
+          (when (seq matching-delta)
+            (let [extended (loan-svc/extend-payment-history loan matching-delta)]
+              (when (not= (:payment-history loan) (:payment-history extended))
+                (println "Loan" (:id loan) "history extended; storing.")
+                (db2/store-loan (assoc extended :user-id user-id))))))
+        (catch Exception e
+          (println "Failed to extend history for loan" (:id loan) ":" (.getMessage e)))))
+    (catch Exception e
+      (println "Failed to load loans for history extension:" (.getMessage e)))))
 
 
 (defn extract-body [http-response]
@@ -46,45 +64,47 @@
   (-> http-response extract-body extract-transactions))
 
 (defn retrieve-bank-transactions-from [date {token :access_token} account_key]
-  (let [date-str (-> date .toLocalDate str)
-        http-response (client/get "https://api.sparebank1.no/personal/banking/transactions"
-                                  {;:accept "application/vnd.sparebank1.v1+json; charset=utf-8"
-                                   :query-params {"accountKey" account_key
-                                                  "fromDate" date-str}
-                                   :headers {:authorization (str "Bearer " token)
-                                             :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
+  (let [date-str (-> ^java.time.OffsetDateTime date .toLocalDate str)
+        http-response (http/http-get "https://api.sparebank1.no/personal/banking/transactions"
+                                     {:query-params {"accountKey" account_key
+                                                     "fromDate" date-str}
+                                      :headers {:authorization (str "Bearer " token)
+                                                :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
         transactions (-> http-response extract-body read-json extract-transactions)]
     transactions))
 
 (defn retrieve-bank-transactions-from-to [from-date to-date {token :access_token} account_key]
-  (let [from-date-str (-> from-date .toLocalDate str)
-        to-date-str (-> to-date .toLocalDate str)
-        http-response (client/get "https://api.sparebank1.no/personal/banking/transactions"
-                                  {;:accept "application/vnd.sparebank1.v1+json; charset=utf-8"
-                                   :query-params {"accountKey" account_key
-                                                  "fromDate" from-date-str
-                                                  "toDate" to-date-str}
-                                   :headers {:authorization (str "Bearer " token)
-                                             :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
+  (let [from-date-str (-> ^java.time.OffsetDateTime from-date .toLocalDate str)
+        to-date-str (-> ^java.time.OffsetDateTime to-date .toLocalDate str)
+        http-response (http/http-get "https://api.sparebank1.no/personal/banking/transactions"
+                                     {:query-params {"accountKey" account_key
+                                                     "fromDate" from-date-str
+                                                     "toDate" to-date-str}
+                                      :headers {:authorization (str "Bearer " token)
+                                                :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
         transactions (-> http-response extract-body read-json extract-transactions)]
     transactions))
 
 (defn retrieve_accounts [{token :access_token}]
-  ;;(client/get "https://api.sparebank1.no/personal/banking/accounts?includeNokAccounts=true&includeCurrencyAccounts=true"
-  (client/get "https://api.sparebank1.no/personal/banking/accounts/default"
-              {;:accept "application/vnd.sparebank1.v1+json; charset=utf-8"
-               :headers {:authorization (str "Bearer " token)}}))
+  (http/http-get "https://api.sparebank1.no/personal/banking/accounts/default"
+                 {:headers {:authorization (str "Bearer " token)}}))
+
+(defn retrieve_accounts_list
+  "List all accounts the user has access to. Each account in the response includes
+   balance and availableBalance fields."
+  [{token :access_token}]
+  (http/http-get "https://api.sparebank1.no/personal/banking/accounts"
+                 {:headers {:authorization (str "Bearer " token)
+                            :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}}))
 
 
 (defn retrieve_transaction_details [{token :access_token} transaction_id]
   (println "retrieveing trans details")
-  (let [http-response (client/get (str "https://api.sparebank1.no/personal/banking/transactions/" transaction_id "/details")
-              {;:accept "application/vnd.sparebank1.v1+json; charset=utf-8"
-               :headers {:authorization (str "Bearer " token)
-                         :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
+  (let [http-response (http/http-get (str "https://api.sparebank1.no/personal/banking/transactions/" transaction_id "/details")
+                                     {:headers {:authorization (str "Bearer " token)
+                                                :accept "application/vnd.sparebank1.v1+json; charset=utf-8"}})
         transaction (-> http-response extract-body read-json)]
-    transaction)
-  )
+    transaction))
 
 (defn add-transaction-details [token transaction]
   (let [id (:id transaction)
@@ -99,10 +119,10 @@
          (map #(if (enrich? %) (enrich %) %)))))
 
 
-(let [start-date (-> 1703631600000 date/unixtime->localtime (date/subtract-days 14))
-      trans-date (-> 1703631600000 date/unixtime->localtime)
-      ]
-  (.isEqual start-date trans-date))
+(comment
+  (let [start-date (-> 1703631600000 date/unixtime->localtime (date/subtract-days 14))
+        trans-date (-> 1703631600000 date/unixtime->localtime)]
+    (.isEqual start-date trans-date)))
 
 (defn transactions-from [transactions date]
   (println "transactions-from: "  date " " (count transactions))
@@ -250,7 +270,7 @@
 (defn retrieve-all-transactions-year-by-year
   "Retrieve all transactions from bank, year by year, starting from now backwards until transactions are found"
   [token account-key]
-  (loop [current-year (.getYear (java.time.ZonedDateTime/now))
+  (loop [current-year (.getYear ^java.time.ZonedDateTime (java.time.ZonedDateTime/now))
          transactions []]
     (println "Retrieving transactions for year:" current-year)
     (let [from-date (date/iso-date->local-datetime (str current-year "-01-01"))
@@ -291,7 +311,7 @@
 ; store (new and updates)
 ; return 
 (defn get-transactions2 [user-id token account-key]
-  (let [categories (db2/get-categories user-id)
+  (let [categories (category-svc/get-categories-with-filters user-id)
         first-date "2015-01-01"
         db-transactions (db2/get-transactions-after user-id first-date false)]
 
@@ -305,7 +325,8 @@
                                        (category/add-categories categories)
                                        (map replace-nil-description))
             _ (db2/store-transactions processed-transactions)]
-        (println "Stored" (count processed-transactions) "transactions in database")))
+        (println "Stored" (count processed-transactions) "transactions in database")
+        (extend-loan-histories! user-id processed-transactions)))
 
     (let [db-transactions (db2/get-transactions-after user-id first-date true)
           _ (println "db-transactions: " (count db-transactions))
@@ -332,43 +353,32 @@
           _ (db2/delete-transactions (map :old replacements))
           _ (db2/store-transactions categorized-updates-and-new)
           all-transactions (concat old categorized-updates-and-new)
-          all-transactions-no-source (map #(dissoc % :source) all-transactions)]
-          (println "Old: " (count old) " updates: " (count replacements) " new: " (count new))
-          (println "latest-db-transactions: " (count latest-db-transactions))
-          (println "latest-bank-transactions: " (count latest-bank-transactions))
-          ;; (println  "last 10 updates-and-new: ")
-          ;; (pp/pprint (take 20 (trans->debug updates-and-new)))
-          ;; (println "categorized-updates-and-new: ")
-          ;; (pp/pprint (take 20 (trans->debug categorized-updates-and-new)))
-          ;; (println "all-transactions: ")
-          ;; (pp/pprint (take 20 (trans->debug all-transactions)))
-          ;; (println "done")
-      all-transactions-no-source)))
+          all-transactions-no-source (map #(dissoc % :source) all-transactions)
+          _ (extend-loan-histories! user-id categorized-updates-and-new)]
+          (println "Refresh result - old:" (count old) "updates:" (count replacements) "new:" (count new))
+      {:transactions all-transactions-no-source
+       :new-count (count new)
+       :updated-count (count replacements)})))
 
 (defn date->iso [iso-date]
   (-> iso-date
       date/iso-date-str->date
       date/date->unixtime))
 
-(def db-transactions [{:amount 2.0 :date (date->iso "2025-11-10") :date-index 1 :description "cat"}
-                      {:amount 3.0 :date (date->iso "2025-11-10") :date-index 2 :description "asdg" :category-id "1234"}
-                      {:amount 3.0 :date (date->iso "2025-11-10") :date-index 3 :description "asdf"}])
+(comment
+  (def db-transactions [{:amount 2.0 :date (date->iso "2025-11-10") :date-index 1 :description "cat"}
+                        {:amount 3.0 :date (date->iso "2025-11-10") :date-index 2 :description "asdg" :category-id "1234"}
+                        {:amount 3.0 :date (date->iso "2025-11-10") :date-index 3 :description "asdf"}])
 
-(def bank-transactions [{:amount 2.0 :date (date->iso "2025-11-10") :description "cat" :source {:amount 2.0 :date (date->iso "2025-11-10") :description "cat"}}
-                        {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf"}}
-                        {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf"}}
-                        {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf"}}
-                        {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf"}}])
+  (def bank-transactions [{:amount 2.0 :date (date->iso "2025-11-10") :description "cat" :source {:amount 2.0 :date (date->iso "2025-11-10") :description "cat"}}
+                          {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-10") :description "asdf"}}
+                          {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 3.0 :date (date->iso "2025-11-12") :description "asdf"}}
+                          {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 5.0 :date (date->iso "2025-11-12") :description "asdf"}}
+                          {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf" :source {:amount 6.0 :date (date->iso "2025-11-12") :description "asdf"}}])
 
-; updates have gotten new date and thus are not overwriting it self in db-transactions
-; they need to store the old date and date-index in order to delete the old transaction
-
-(let [[updates, new] (merge/process-transactions-from-bank db-transactions bank-transactions)
-      updated-db-transactions (update-db-transactions db-transactions updates)
-      ]
-      updates
-  ;; updated-db-transactions
-  )
+  (let [[updates, new] (merge/process-transactions-from-bank db-transactions bank-transactions)
+        updated-db-transactions (update-db-transactions db-transactions updates)]
+    updates))
 
 ;; (defn get-transactions [token account-key] ; maybe config?
 ;;   (println "get-transactions: " (count (db2/get-transactions-after "2022-01-01")))
@@ -413,10 +423,32 @@
          all-transactions (get-transactions2 user-id tokens account_key)]
      (pp/pprint (take 3 all-transactions)))))
 
+(defn write-transit [data]
+  (let [out (ByteArrayOutputStream.)
+        writer (transit/writer out :json)]
+    (transit/write writer data)
+    (.toString out "UTF-8")))
+
+(defn transit-response [data]
+  {:status 200
+   :headers {"Content-Type" "application/transit+json"}
+   :body (write-transit data)})
+
 (defn get-db-only-transactions
   "Return transactions from DB only, no bank fetching."
   [user-id]
   (db2/get-transactions-after user-id "2015-01-01" true))
+
+(defn get-recent-transactions
+  "Return the most recent 2 months of transactions from DB."
+  [user-id]
+  (if-let [latest-date-str (db2/get-latest-transaction-date user-id)]
+    (let [latest-date (java.time.LocalDate/parse latest-date-str)
+          two-months-before (.minusMonths latest-date 2)
+          iso-date (str two-months-before)]
+      (println "Recent transactions: latest=" latest-date-str "from=" iso-date)
+      (db2/get-transactions-after user-id iso-date true))
+    []))
 
 (defn transaction_handler_test [req]
   {:status 200
@@ -440,39 +472,31 @@
 (defn transaction_handler [request]
   (try
     (let [user-id (:user-id request)
-          user-accounts (account-svc/get-user-accounts user-id)
-          first-account (first user-accounts)]
+          user-accounts (db2/get-accounts-for-user user-id)
+          first-account (first user-accounts)
+          db-only-response (fn [] (transit-response {:transactions (get-db-only-transactions user-id)
+                                                     :new-count 0 :updated-count 0}))]
       (if-not first-account
-        (let [db-txns (get-db-only-transactions user-id)
-              response-body (json/write-str db-txns)]
-          {:status 200
-           :headers {"Content-Type" "application/json"}
-           :body response-body})
+        (db-only-response)
         (let [account-id (:account-id first-account)
-              tokens (auth/get-tokens-for-account
-                       #(account-svc/get-account-tokens user-id account-id)
-                       #(account-svc/store-account-tokens user-id account-id %))]
+              tokens (try
+                       (auth/get-tokens-for-account
+                         (:client-id first-account)
+                         (:client-secret first-account)
+                         #(account-svc/get-account-tokens user-id account-id)
+                         #(account-svc/store-account-tokens user-id account-id %))
+                       (catch Exception e
+                         (println "Bank token refresh failed, falling back to DB transactions:" (.getMessage e))
+                         nil))]
           (if (nil? tokens)
-            (let [db-txns (get-db-only-transactions user-id)
-                  response-body (json/write-str db-txns)]
-              {:status 200
-               :headers {"Content-Type" "application/json"}
-               :body response-body})
+            (db-only-response)
             (let [account (db2/get-account user-id account-id)
                   account-key (resolve-bank-account-key user-id account-id tokens (:bank-account-key account))]
               (if (nil? account-key)
-                (let [db-txns (get-db-only-transactions user-id)
-                      response-body (json/write-str db-txns)]
-                  {:status 200
-                   :headers {"Content-Type" "application/json"}
-                   :body response-body})
-                (let [all-transactions (get-transactions2 user-id tokens account-key)
-                      response-body (json/write-str all-transactions)]
-                  (if all-transactions
-                    {:status 200
-                     :headers {"Content-Type" "application/json"
-                               "Content-Length" (-> response-body .getBytes count str)}
-                     :body response-body}
+                (db-only-response)
+                (let [result (get-transactions2 user-id tokens account-key)]
+                  (if result
+                    (transit-response result)
                     {:status 500
                      :headers {"Content-Type" "application/json"}
                      :body (json/write-str {:error "Failed to load transactions"})}))))))))
@@ -482,6 +506,90 @@
       {:status 500
        :headers {"Content-Type" "application/json"}
        :body (json/write-str {:error (str "Server error: " (.getMessage e))})})))
+
+(defn recent_transaction_handler [request]
+  (try
+    (let [user-id (:user-id request)
+          transactions (get-recent-transactions user-id)]
+      (transit-response {:transactions transactions :new-count 0 :updated-count 0}))
+    (catch Exception e
+      (println "recent_transaction_handler error:" (.getMessage e))
+      {:status 500
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str {:error (str "Server error: " (.getMessage e))})})))
+
+(defn retrieve-balance
+  "Fetch the balance of the user's bank account. Calls the accounts-list endpoint
+   and picks the account whose key matches `account-key` (or the first one if not
+   supplied). Returns {:balance N :available-balance N} or nil on failure."
+  [tokens account-key]
+  (let [response (retrieve_accounts_list tokens)
+        status (:status response)
+        body-str (:body response)]
+    (cond
+      (not (and status (<= 200 status 299)))
+      (do
+        (println "retrieve-balance: bank returned status" status
+                 "body:" (some-> body-str (subs 0 (min 200 (count body-str)))))
+        nil)
+
+      (nil? body-str)
+      (do (println "retrieve-balance: empty body") nil)
+
+      :else
+      (let [body (try (json/read-str body-str :key-fn keyword)
+                      (catch Exception e
+                        (println "retrieve-balance: parse failed:" (.getMessage e))
+                        nil))
+            accounts (:accounts body)
+            matched (or (when account-key
+                          (some #(when (= (:key %) account-key) %) accounts))
+                        (first accounts))]
+        (cond
+          (nil? body)
+          (do (println "retrieve-balance: body parse returned nil") nil)
+
+          (nil? matched)
+          (do (println "retrieve-balance: no matching account — body keys:" (keys body)
+                       "account count:" (count accounts))
+              nil)
+
+          :else
+          {:balance (:balance matched)
+           :available-balance (:availableBalance matched)})))))
+
+(defn balance_handler [request]
+  (try
+    (let [user-id (:user-id request)
+          user-accounts (db2/get-accounts-for-user user-id)
+          first-account (first user-accounts)]
+      (if-not first-account
+        {:status 200
+         :headers {"Content-Type" "application/json"}
+         :body (json/write-str {:balance nil})}
+        (let [account-id (:account-id first-account)
+              tokens (try
+                       (auth/get-tokens-for-account
+                         (:client-id first-account)
+                         (:client-secret first-account)
+                         #(account-svc/get-account-tokens user-id account-id)
+                         #(account-svc/store-account-tokens user-id account-id %))
+                       (catch Exception e
+                         (println "Balance: bank token refresh failed:" (.getMessage e))
+                         nil))]
+          (if (nil? tokens)
+            {:status 200
+             :headers {"Content-Type" "application/json"}
+             :body (json/write-str {:balance nil})}
+            (let [balance (retrieve-balance tokens (:bank-account-key first-account))]
+              {:status 200
+               :headers {"Content-Type" "application/json"}
+               :body (json/write-str (or balance {:balance nil}))})))))
+    (catch Exception e
+      (println "balance_handler error:" (.getMessage e))
+      {:status 200
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str {:balance nil})})))
 
 (defn transaction_details_handler [id request]
   (let [tokens (auth/get_tokens "session_tokens.txt")

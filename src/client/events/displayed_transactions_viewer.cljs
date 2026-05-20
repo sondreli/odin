@@ -74,13 +74,7 @@
 (reg-event-db
  :view-category-period
  (fn [db [_ [all-transactions filter-path period display-option]]]
-     (println "=== view-category-period ===")
-     (println "all-transactions:" (count all-transactions))
-     (println "Sample transaction:" (first all-transactions))
-     (println "filter-path:" filter-path ", period:" period ", display-option:" display-option)
    (let [updated-db (utils/apply-update db all-transactions period filter-path display-option)]
-     (println "Updated db with new transactions")
-     (println "=== END view-category-period ===")
      updated-db)))
 
 (defn as-filter-in-edit [db category]

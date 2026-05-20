@@ -9,12 +9,12 @@
 (defn generate-jwt [user-id email]
   (jwt/sign {:user-id user-id
              :email email
-             :exp (.getEpochSecond (.plusSeconds (Instant/now) 86400))}
-            config/jwt-secret))
+             :exp (.getEpochSecond (.plusSeconds (Instant/now) 2592000))}
+            @config/jwt-secret))
 
 (defn verify-jwt [token]
   (try
-    (jwt/unsign token config/jwt-secret)
+    (jwt/unsign token @config/jwt-secret)
     (catch Exception _
       nil)))
 

@@ -2,121 +2,72 @@
   (:require [reagent.core :as r]
             [re-frame.core :refer [subscribe dispatch]]
             [goog.string :as gstring]
-            [goog.string.format]))
+            [goog.string.format]
+            [common.category-service :as category]
+            [client.components.treemap-component.layout :as layout]))
 
-(defn- parse-target [t]
-  (when t
-    (let [n (if (number? t) t (js/parseFloat (str t)))]
-      (when (and (number? n) (not (js/isNaN n)) (pos? n)) n))))
+(def ^:private parse-target layout/parse-target)
+(def ^:private darken-color layout/darken-color)
+(def ^:private lighten-color layout/lighten-color)
 
-;; ---------- Squarified Treemap Layout ----------
-;;
-;; Produces rectangles whose aspect ratios are as close to 1 (square)
-;; as possible. Larger items end up on the left, smaller on the right.
-
-(defn- aspect-ratio [w h]
-  (if (or (<= w 0) (<= h 0))
-    js/Infinity
-    (max (/ w h) (/ h w))))
-
-(defn- worst-ratio
-  "Worst aspect ratio among `items` if laid out as a single strip in `rect`."
-  [items rect]
-  (let [{rw :w rh :h} rect
-        total-area (reduce + 0 (map :area items))]
-    (if (or (<= total-area 0) (empty? items))
-      js/Infinity
-      (if (>= rw rh)
-        (let [sw (/ total-area rh)]
-          (reduce max 1 (map #(aspect-ratio sw (/ (:area %) sw)) items)))
-        (let [sh (/ total-area rw)]
-          (reduce max 1 (map #(aspect-ratio (/ (:area %) sh) sh) items)))))))
-
-(defn- layout-strip
-  "Position `items` as a strip inside `rect`.
-   Returns [positioned-items remaining-rect]."
-  [items rect]
-  (let [{:keys [x y w h]} rect
-        total-area (reduce + 0 (map :area items))]
-    (if (>= w h)
-      ;; landscape -> vertical strip on the left
-      (let [sw (/ total-area h)
-            [_ positioned]
-            (reduce (fn [[cy acc] item]
-                      (let [ih (/ (:area item) sw)]
-                        [(+ cy ih)
-                         (conj acc (assoc item :rect {:x x :y cy :w sw :h ih}))]))
-                    [y []] items)]
-        [positioned {:x (+ x sw) :y y :w (- w sw) :h h}])
-      ;; portrait -> horizontal strip on the top
-      (let [sh (/ total-area w)
-            [_ positioned]
-            (reduce (fn [[cx acc] item]
-                      (let [iw (/ (:area item) sh)]
-                        [(+ cx iw)
-                         (conj acc (assoc item :rect {:x cx :y y :w iw :h sh}))]))
-                    [x []] items)]
-        [positioned {:x x :y (+ y sh) :w w :h (- h sh)}]))))
-
-(defn- squarify
-  "Lay out `items` (must have :area, sorted descending) into `rect`
-   using the squarified treemap algorithm.
-   Returns items with :rect {:x :y :w :h} added."
-  [items rect]
-  (when (seq items)
-    (loop [row       [(first items)]
-           remaining (rest items)
-           rect      rect
-           result    []]
-      (if (empty? remaining)
-        (let [[positioned _] (layout-strip row rect)]
-          (into result positioned))
-        (let [candidate (conj row (first remaining))
-              cur-worst (worst-ratio row rect)
-              cand-worst (worst-ratio candidate rect)]
-          (if (<= cand-worst cur-worst)
-            (recur candidate (rest remaining) rect result)
-            (let [[positioned new-rect] (layout-strip row rect)]
-              (recur [(first remaining)] (rest remaining) new-rect
-                     (into result positioned)))))))))
+;; Layout algorithm is in client.components.treemap-component.layout
 
 ;; ---------- Component ----------
 
-(def ^:private excluded-ids #{"in" "out" "ukategorisert-in"})
-
-(defn- darken-color
-  "Make a hex color darker by mixing with black."
-  [color-str factor]
-  (try
-    (let [hex (subs color-str 1)
-          r (js/parseInt (subs hex 0 2) 16)
-          g (js/parseInt (subs hex 2 4) 16)
-          b (js/parseInt (subs hex 4 6) 16)
-          dr (int (* r factor))
-          dg (int (* g factor))
-          db (int (* b factor))]
-      (str "#"
-           (.padStart (.toString dr 16) 2 "0")
-           (.padStart (.toString dg 16) 2 "0")
-           (.padStart (.toString db 16) 2 "0")))
-    (catch :default _ color-str)))
-
-(defn- lighten-color
-  "Make a hex color lighter by mixing with white."
-  [color-str factor]
-  (try
-    (let [hex (subs color-str 1)
-          r (js/parseInt (subs hex 0 2) 16)
-          g (js/parseInt (subs hex 2 4) 16)
-          b (js/parseInt (subs hex 4 6) 16)
-          lr (int (+ r (* (- 255 r) factor)))
-          lg (int (+ g (* (- 255 g) factor)))
-          lb (int (+ b (* (- 255 b) factor)))]
-      (str "#"
-           (.padStart (.toString lr 16) 2 "0")
-           (.padStart (.toString lg 16) 2 "0")
-           (.padStart (.toString lb 16) 2 "0")))
-    (catch :default _ color-str)))
+(defn- compute-sub-filter-amounts
+  "Given a full category (with :marker) and its transactions, return sub-items
+   for each filter line plus an 'Annet' bucket for unmatched transactions.
+   When selected-tag is provided, computes :tag-ratio and :tag-color for each sub-item."
+  [full-category category-transactions base-color selected-tag]
+  (let [lines (-> full-category :marker :description)
+        filters (or (:filters full-category) [])
+        filter-text->obj (into {} (map (juxt :text identity) filters))
+        tag-id (when selected-tag (:id selected-tag))
+        tag-color (when selected-tag (:color selected-tag))]
+    (when (seq lines)
+      (let [grouped (group-by
+                     (fn [txn]
+                       (some #(when (category/match-fun (:description txn) %) %) lines))
+                     category-transactions)
+            sub-items (into []
+                        (comp
+                         (map-indexed
+                          (fn [idx line]
+                            (let [txns (get grouped line [])]
+                              (when (seq txns)
+                                (let [total-amt (reduce + 0 (map #(Math/abs (:amount %)) txns))
+                                      filter-obj (get filter-text->obj line)
+                                      filter-has-tag? (and tag-id filter-obj
+                                                           (some #{tag-id} (:tag-ids filter-obj)))
+                                      tr (when tag-id
+                                           (if filter-has-tag?
+                                             1.0
+                                             (let [tagged-amt (reduce + 0
+                                                                (map #(Math/abs (:amount %))
+                                                                     (filter #(some #{tag-id} (:tag-ids %)) txns)))]
+                                               (when (pos? total-amt) (/ tagged-amt total-amt)))))]
+                                  (cond-> {:id    (str (:id full-category) "-" idx)
+                                           :name  line
+                                           :color base-color
+                                           :value total-amt}
+                                    (and tr (pos? tr)) (assoc :tag-ratio tr :tag-color tag-color)))))))
+                         (filter some?))
+                        lines)
+            unmatched (get grouped nil [])
+            annet (when (seq unmatched)
+                    (let [total-amt (reduce + 0 (map #(Math/abs (:amount %)) unmatched))
+                          tr (when tag-id
+                               (let [tagged-amt (reduce + 0
+                                                  (map #(Math/abs (:amount %))
+                                                       (filter #(some #{tag-id} (:tag-ids %)) unmatched)))]
+                                 (when (pos? total-amt) (/ tagged-amt total-amt))))]
+                      (cond-> {:id    (str (:id full-category) "-annet")
+                               :name  "Annet"
+                               :color base-color
+                               :value total-amt}
+                        (and tr (pos? tr)) (assoc :tag-ratio tr :tag-color tag-color))))]
+        (cond-> sub-items
+          annet (conj annet))))))
 
 (defn- label-styles [min-dim]
   {:name {:color "#fff"
@@ -137,7 +88,7 @@
           :text-shadow "0 1px 3px rgba(0,0,0,0.5)"
           :text-align "center"}})
 
-(defn- treemap-rect [{:keys [id name color value target]} rect pct-base
+(defn- treemap-rect [{:keys [id name color value target tag-ratio tag-color]} rect pct-base
                      hovered-id selected-name show-targets?]
   (let [{ix :x iy :y iw :w ih :h} rect
         pct     (when (and pct-base (pos? pct-base))
@@ -158,22 +109,20 @@
                        1.0)
         horizontal? (>= iw ih)
         over-target? (and show-split? (> value cat-target))
-        accent-color (if over-target?
-                       (darken-color base-color 0.65)
-                       (lighten-color base-color 0.5))
+        under-color (lighten-color base-color 0.5)
         styles (label-styles min-dim)]
     ^{:key id}
-    [:div {:style {:position         "absolute"
-                   :left             (str ix "px")
-                   :top              (str iy "px")
-                   :width            (str iw "px")
-                   :height           (str ih "px")
-                   :border           "1px solid rgba(255,255,255,0.5)"
-                   :box-sizing       "border-box"
-                   :overflow         "hidden"
-                   :cursor           "pointer"
-                   :transition       "opacity 0.15s ease"
-                   :opacity          opacity}
+    [:div {:style (merge {:position         "absolute"
+                          :left             (str ix "px")
+                          :top              (str iy "px")
+                          :width            (str iw "px")
+                          :height           (str ih "px")
+                          :box-sizing       "border-box"
+                          :overflow         "hidden"
+                          :cursor           "pointer"
+                          :transition       "opacity 0.15s ease"
+                          :opacity          opacity}
+                         {:border "1px solid rgba(255,255,255,0.5)"})
            :on-mouse-enter #(reset! hovered-id id)
            :on-mouse-leave #(reset! hovered-id nil)
            :on-click #(dispatch [:view-category name])
@@ -191,10 +140,25 @@
                                 (if horizontal?
                                   {:width normal-pct :height "100%"}
                                   {:height normal-pct :width "100%"}))}]
-           [:div {:style (merge {:background-color accent-color}
+           [:div {:style (merge {:background-color (if over-target? base-color under-color)}
                                 (if horizontal?
                                   {:width accent-pct :height "100%"}
                                   {:height accent-pct :width "100%"}))}]]
+          (when over-target?
+            (let [stripe-color (darken-color base-color 0.6)]
+              [:div {:style (merge {:position "absolute" :pointer-events "none"
+                                    :box-sizing "border-box"
+                                    :background (str "repeating-linear-gradient(45deg, transparent, transparent 4px, " stripe-color " 4px, " stripe-color " 6px)")}
+                                 (if horizontal?
+                                   {:top "0" :right "0" :width accent-pct :height "100%"}
+                                   {:bottom "0" :left "0" :height accent-pct :width "100%"}))}]))
+          (when (and tag-ratio (pos? tag-ratio))
+            [:div {:style {:position "absolute" :pointer-events "none"
+                           :top "0" :left "0"
+                           :width (if (>= tag-ratio 1.0) "100%" (str (* 100 tag-ratio) "%"))
+                           :height "100%"
+                           :background (str "repeating-linear-gradient(45deg, transparent, transparent 20px, "
+                                            tag-color " 20px, " tag-color " 30px)")}}])
           [:div {:style {:position "absolute" :inset "0"
                          :display "flex" :flex-direction "column"
                          :align-items "center" :justify-content "center"
@@ -204,16 +168,121 @@
            (when (and pct (> min-dim 40))
              [:span {:style (:pct styles)}
               (gstring/format "%.1f%%" pct)])]])
-       [:div {:style {:background-color base-color
-                      :width "100%" :height "100%"
-                      :display "flex" :flex-direction "column"
-                      :align-items "center" :justify-content "center"
-                      :overflow "hidden"}}
-        (when (> min-dim 20)
-          [:span {:style (:name styles)} name])
-        (when (and pct (> min-dim 40))
-          [:span {:style (:pct styles)}
-           (gstring/format "%.1f%%" pct)])])]))
+       [:<>
+        [:div {:style {:background-color base-color
+                       :width "100%" :height "100%"}}]
+        (when (and tag-ratio (pos? tag-ratio))
+          [:div {:style {:position "absolute" :pointer-events "none"
+                         :top "0" :left "0"
+                         :width (if (>= tag-ratio 1.0) "100%" (str (* 100 tag-ratio) "%"))
+                         :height "100%"
+                         :background (str "repeating-linear-gradient(45deg, transparent, transparent 20px, "
+                                          tag-color " 20px, " tag-color " 30px)")}}])
+        [:div {:style {:position "absolute" :inset "0"
+                       :display "flex" :flex-direction "column"
+                       :align-items "center" :justify-content "center"
+                       :pointer-events "none"
+                       :overflow "hidden"}}
+         (when (> min-dim 20)
+           [:span {:style (:name styles)} name])
+         (when (and pct (> min-dim 40))
+           [:span {:style (:pct styles)}
+            (gstring/format "%.1f%%" pct)])]])]))
+
+(defn- treemap-sub-rect [{:keys [id name color value tag-ratio tag-color]} rect pct-base hovered-id parent-name filter-path]
+  (let [{ix :x iy :y iw :w ih :h} rect
+        pct     (when (and pct-base (pos? pct-base))
+                  (* 100 (/ value pct-base)))
+        min-dim (min iw ih)
+        hv      @hovered-id
+        is-hovered? (= hv id)
+        is-annet? (= name "Annet")
+        ;; Determine if this sub-rect is selected/faded
+        selected-cat (when (>= (count filter-path) 1) (first filter-path))
+        selected-filter (when (= (count filter-path) 2) (second filter-path))
+        is-in-selected-cat? (= parent-name selected-cat)
+        is-selected? (and is-in-selected-cat? (= name selected-filter))
+        ;; Fade logic: if any selection exists, fade non-selected items
+        has-selection? (seq filter-path)
+        opacity (cond
+                  (not has-selection?) (if (and (some? hv) (not is-hovered?)) 0.6 1)
+                  is-selected? 1
+                  (and is-in-selected-cat? (nil? selected-filter)) 1
+                  :else 0.4)
+        styles (label-styles min-dim)]
+    ^{:key id}
+    [:div {:style {:position "absolute"
+                   :left (str ix "px") :top (str iy "px")
+                   :width (str iw "px") :height (str ih "px")
+                   :box-sizing "border-box"
+                   :overflow "hidden"
+                   :cursor (if is-annet? "default" "pointer")
+                   :transition "opacity 0.15s ease"
+                   :opacity opacity
+                   :border "1px solid rgba(255,255,255,0.4)"}
+           :on-mouse-enter #(reset! hovered-id id)
+           :on-mouse-leave #(reset! hovered-id nil)
+           :on-click (when-not is-annet?
+                       #(if is-selected?
+                          (dispatch [:navigate [nil nil []]])
+                          (dispatch [:navigate [nil nil [parent-name name]]])))
+           :title (str name " — " (gstring/format "%.0f" value)
+                       (when pct (str " (" (gstring/format "%.1f%%" pct) ")")))}
+     [:<>
+      [:div {:style {:background-color color
+                     :width "100%" :height "100%"}}]
+      (when (and tag-ratio (pos? tag-ratio))
+        [:div {:style {:position "absolute" :pointer-events "none"
+                       :top "0" :left "0"
+                       :width (if (>= tag-ratio 1.0) "100%" (str (* 100 tag-ratio) "%"))
+                       :height "100%"
+                       :background (str "repeating-linear-gradient(45deg, transparent, transparent 20px, "
+                                        tag-color " 20px, " tag-color " 30px)")}}])
+      [:div {:style {:position "absolute" :inset "0"
+                     :display "flex" :flex-direction "column"
+                     :align-items "center" :justify-content "center"
+                     :pointer-events "none"
+                     :overflow "hidden"}}
+       (when (> min-dim 20)
+         [:span {:style (merge (:name styles) {:font-size (cond (> min-dim 80) "11px"
+                                                                (> min-dim 50) "9px"
+                                                                :else "8px")})} name])
+       (when (and pct (> min-dim 40))
+         [:span {:style (:pct styles)}
+          (gstring/format "%.1f%%" pct)])]]]))
+
+(defn- treemap-expanded-rect [cat-item rect sub-items pct-base hovered-id filter-path]
+  (let [{ix :x iy :y iw :w ih :h} rect
+        min-dim (min iw ih)
+        cat-name (:name cat-item)
+        total-value (reduce + 0 (map :value sub-items))
+        sub-pct-base total-value
+        body-area (* iw ih)
+        ;; Fade entire category if a different category is selected
+        selected-cat (when (>= (count filter-path) 1) (first filter-path))
+        is-selected-cat? (or (nil? selected-cat) (= cat-name selected-cat))
+        opacity (if is-selected-cat? 1 0.4)]
+    (if (< min-dim 40)
+      [treemap-rect cat-item rect pct-base hovered-id selected-cat false]
+      ^{:key (:id cat-item)}
+      [:div {:style {:position "absolute"
+                     :left (str ix "px") :top (str iy "px")
+                     :width (str iw "px") :height (str ih "px")
+                     :box-sizing "border-box"
+                     :overflow "hidden"
+                     :transition "opacity 0.15s ease"
+                     :opacity opacity}}
+       (when (and (pos? ih) (pos? body-area) (seq sub-items))
+         (let [items-with-area (mapv (fn [si]
+                                       (assoc si :area (* body-area (/ (:value si) total-value))))
+                                     sub-items)
+               laid-out (layout/squarify items-with-area {:x 0 :y 0 :w iw :h ih})]
+           [:div {:style {:position "relative" :width (str iw "px") :height (str ih "px")}}
+            (doall
+             (for [item laid-out]
+               [treemap-sub-rect item (:rect item) sub-pct-base hovered-id cat-name filter-path]))]))])))
+
+(def hovered-category-id (r/atom nil))
 
 (defn treemap
   "Treemap visualization of category spending.
@@ -227,7 +296,7 @@
   (let [width-atom    (r/atom nil)
         ref-atom      (r/atom nil)
         obs-atom      (r/atom nil)
-        hovered-id    (r/atom nil)]
+        hovered-id    hovered-category-id]
     (r/create-class
      {:component-did-mount
       (fn [_]
@@ -245,15 +314,16 @@
           (.disconnect obs)))
 
       :reagent-render
-      (fn [{:keys [categories pct-base show-targets? height-ratio]
-            :or   {height-ratio 0.5 show-targets? false}}]
+      (fn [{:keys [categories pct-base show-targets? show-filters?
+                   full-categories period-transactions selected-tag height-ratio]
+            :or   {height-ratio 0.5 show-targets? false show-filters? false}}]
         (let [cw @width-atom
               ch (when cw (* cw height-ratio))
               filter-path @(subscribe [:filter-path])
-              selected-name (when (= 1 (count filter-path)) (first filter-path))
+              selected-name (when (>= (count filter-path) 1) (first filter-path))
 
               cats (->> categories
-                        (remove #(excluded-ids (:id %)))
+                        (remove #(layout/excluded-ids (:id %)))
                         (filter #(or (neg? (:amount %))
                                      (and show-targets? (parse-target (:target %)))))
                         (map (fn [c]
@@ -270,6 +340,13 @@
                                     (:value %))
                                  >))
 
+              ;; Lookups needed for show-filters? or selected-tag
+              need-txn-lookups? (or show-filters? selected-tag)
+              cat-name->full (when need-txn-lookups?
+                               (into {} (map (juxt :name identity) full-categories)))
+              cat-id->txns   (when need-txn-lookups?
+                               (group-by :category-id period-transactions))
+
               total-value (reduce + 0
                                   (map #(if show-targets?
                                           (max (:value %) (or (:target %) 0))
@@ -278,15 +355,35 @@
               vw (when (and cw (pos? total-value)) cw)
               va (when (and vw ch) (* vw ch))
 
+              tag-id (when selected-tag (:id selected-tag))
+              tag-color (when selected-tag (:color selected-tag))
+
               items    (when va
                          (mapv (fn [c]
                                  (let [effective (if show-targets?
                                                    (max (:value c) (or (:target c) 0))
-                                                   (:value c))]
-                                   (assoc c :area (* va (/ effective total-value)))))
+                                                   (:value c))
+                                       cat-txns (when need-txn-lookups?
+                                                  (get cat-id->txns (:id c) []))
+                                       sub-items (when show-filters?
+                                                   (when-let [full-cat (get cat-name->full (:name c))]
+                                                     (compute-sub-filter-amounts
+                                                      full-cat
+                                                      cat-txns
+                                                      (or (:color c) "#9ca3af")
+                                                      selected-tag)))
+                                       ;; Tag ratio for category rect (when filters OFF)
+                                       tr (when (and tag-id (not show-filters?) (pos? (:value c)))
+                                            (let [tagged-amt (reduce + 0
+                                                               (map #(Math/abs (:amount %))
+                                                                    (filter #(some #{tag-id} (:tag-ids %)) cat-txns)))]
+                                              (when (pos? tagged-amt) (/ tagged-amt (:value c)))))]
+                                   (cond-> (assoc c :area (* va (/ effective total-value)))
+                                     (seq sub-items) (assoc :sub-items sub-items)
+                                     (and tr (pos? tr)) (assoc :tag-ratio tr :tag-color tag-color))))
                                cats))
               laid-out (when (and items (seq items) (pos? vw) (pos? ch))
-                         (squarify items {:x 0 :y 0 :w vw :h ch}))]
+                         (layout/squarify items {:x 0 :y 0 :w vw :h ch}))]
 
           [:div {:ref   #(when % (reset! ref-atom %))
                  :style {:width            "100%"
@@ -299,8 +396,10 @@
            (when laid-out
              (doall
               (for [item laid-out]
-                [treemap-rect item (:rect item) pct-base
-                 hovered-id selected-name show-targets?])))] ) ) } ) ))
+                (if (and show-filters? (seq (:sub-items item)))
+                  [treemap-expanded-rect item (:rect item) (:sub-items item) pct-base hovered-id filter-path]
+                  [treemap-rect item (:rect item) pct-base
+                   hovered-id selected-name show-targets?]))))]))})))
 
 (defn- treemap-arrow-above [pct label]
   [:div {:style {:position "absolute"
@@ -330,6 +429,179 @@
    [:span {:style {:font-size "13px" :color "#555" :margin-top "2px"}}
     label]])
 
+(defn- budget-summary-bar
+  "Mobile-style segmented bar showing budget breakdown (Brukt / Overforbruk /
+   Uncategorized / Gjenstår) plus an arithmetic expression for current month's
+   available balance vs remaining budget.
+
+   Segments and their amounts are passed in directly so the caller controls
+   classification."
+  [{:keys [spent overuse uncategorized remaining balance current-month?]}]
+  (let [total (+ spent overuse uncategorized remaining)]
+    (when (pos? total)
+      (let [pct       (fn [v] (* 100 (/ v total)))
+            segments  (cond-> [{:label "Brukt"      :amount spent
+                                :color "#4a6cf7"    :text-color "#333"
+                                :pct (pct spent)}]
+                        (pos? overuse)
+                        (conj {:label "Overforbruk" :amount overuse
+                               :color "#ef4444"     :text-color "#c00"
+                               :pct (pct overuse)})
+
+                        (pos? uncategorized)
+                        (conj {:label nil           :amount uncategorized
+                               :color "#9ca3af"     :text-color "#666"
+                               :pct (pct uncategorized)})
+
+                        (pos? remaining)
+                        (conj {:label "Gjenstår"    :amount remaining
+                               :color "#34d399"     :text-color "#333"
+                               :pct (pct remaining)}))
+            ;; Estimated label width as a fraction of the bar width (~150px / ~850px).
+            ;; Used to detect when a right-anchored label would overlap the previous one
+            ;; and should be moved to a row below the bar instead.
+            text-est-pct 18
+            placements
+            (loop [i 0
+                   cum 0
+                   prev-text-right 0
+                   result []]
+              (if (>= i (count segments))
+                result
+                (let [seg (nth segments i)
+                      has-label? (some? (:label seg))
+                      bar-pct (:pct seg)
+                      bar-right (+ cum bar-pct)
+                      right-pct (- 100 bar-right)
+                      text-left (if has-label?
+                                  (max 0 (- bar-right text-est-pct))
+                                  bar-right)
+                      overlaps-prev? (and has-label? (pos? i) (< text-left prev-text-right))
+                      text-below? overlaps-prev?
+                      my-text-right (cond
+                                      (not has-label?) prev-text-right
+                                      text-below?      prev-text-right
+                                      :else            (min 100 (max bar-right text-est-pct)))]
+                  (recur (inc i)
+                         bar-right
+                         my-text-right
+                         (conj result {:left-pct cum
+                                       :bar-pct bar-pct
+                                       :right-pct right-pct
+                                       :text-below? text-below?})))))
+            below-placements
+            (loop [i 0 rows [] result []]
+              (if (>= i (count segments))
+                result
+                (let [seg (nth segments i)
+                      p (nth placements i)
+                      has-label? (some? (:label seg))]
+                  (if (or (not (:text-below? p)) (not has-label?))
+                    (recur (inc i) rows (conj result nil))
+                    (let [bar-right (+ (:left-pct p) (:bar-pct p))
+                          text-left (max 0 (- bar-right text-est-pct))
+                          row-idx (loop [r 0]
+                                    (if (>= r (count rows))
+                                      r
+                                      (if (< text-left (nth rows r))
+                                        (recur (inc r))
+                                        r)))
+                          new-right (min 100 (max bar-right text-est-pct))
+                          rows (if (>= row-idx (count rows))
+                                 (conj rows new-right)
+                                 (assoc rows row-idx new-right))]
+                      (recur (inc i) rows (conj result row-idx)))))))
+            below-row-count (count (distinct (filter some? below-placements)))
+            render-label (fn [seg]
+                           [:span
+                            [:span {:style {:color "#888" :margin-right "4px"}} (:label seg)]
+                            [:span {:style {:font-weight "600" :color (:text-color seg)}}
+                             (gstring/format "%.0f" (:amount seg))]])]
+        [:div {:style {:margin-top "12px"}}
+         ;; Above-bar labels: one row, right-anchored to each segment that fits there
+         [:div {:style {:position "relative" :height "18px" :margin-bottom "2px"}}
+          (doall
+           (for [[i seg] (map-indexed vector segments)
+                 :let [p (nth placements i)]
+                 :when (and (:label seg) (not (:text-below? p)))]
+             ^{:key (str "above-" i)}
+             [:div {:style {:position "absolute"
+                            :right (str (:right-pct p) "%")
+                            :bottom "0"
+                            :font-size "12px"
+                            :white-space "nowrap"
+                            :padding-right "4px"}}
+              (render-label seg)]))]
+         ;; Continuous segmented bar
+         [:div {:style {:display "flex" :height "10px" :border-radius "5px" :overflow "hidden"}}
+          (doall
+           (for [[i seg] (map-indexed vector segments)]
+             ^{:key (str "bar-" i)}
+             [:div {:style {:flex (:pct seg) :background-color (:color seg)}}]))]
+         ;; Below-bar label rows (one per row that was needed)
+         (when (pos? below-row-count)
+           (doall
+            (for [row (range below-row-count)]
+              ^{:key (str "below-row-" row)}
+              [:div {:style {:position "relative" :height "18px"
+                             :margin-top (if (zero? row) "4px" "0")}}
+               (doall
+                (for [[i seg] (map-indexed vector segments)
+                      :let [p (nth placements i)
+                            bp (nth below-placements i)]
+                      :when (and (:label seg) (:text-below? p) (= bp row))]
+                  ^{:key (str "below-" i)}
+                  [:div {:style {:position "absolute"
+                                 :right (str (:right-pct p) "%")
+                                 :top "0"
+                                 :font-size "12px"
+                                 :white-space "nowrap"
+                                 :padding-right "4px"}}
+                   (render-label seg)]))])))
+         ;; Arithmetic expression for current month: balance − remaining = leftover
+         (when current-month?
+           (let [diff (when balance (- balance remaining))]
+             [:div {:style {:margin-top "10px" :padding-top "8px"
+                            :border-top "1px solid #e5e7eb"
+                            :text-align "center" :font-size "14px"
+                            :color (if balance "#333" "#999")}}
+              (if balance
+                [:span
+                 [:span (gstring/format "%.0f" balance)]
+                 [:span {:style {:margin "0 6px" :color "#888"}} "−"]
+                 [:span (gstring/format "%.0f" remaining)]
+                 [:span {:style {:margin "0 6px" :color "#888"}} "="]
+                 [:span {:style {:font-weight "600"
+                                 :color (cond (nil? diff) "#999"
+                                              (neg? diff)  "#ef4444"
+                                              :else         "#34d399")}}
+                  (gstring/format "%.0f" diff)]]
+                (str "— − " (gstring/format "%.0f" remaining) " = —"))]))]))))
+
+(defn- filter-path-bar
+  "Horizontal bar showing the value of the current filter-path selection,
+   starting from the left with the category color."
+  [filter-value total-spending cat-color]
+  (let [bar-pct (when (and (pos? filter-value) (pos? total-spending))
+                  (min 100 (* 100 (/ filter-value total-spending))))]
+    (when bar-pct
+      [:div {:style {:position "relative" :height "22px" :margin-top "2px"}}
+       [:div {:style {:position "absolute"
+                      :left "0"
+                      :width (str bar-pct "%")
+                      :top "0"
+                      :height "4px"
+                      :background-color cat-color
+                      :border-radius "2px"}}]
+       [:span {:style {:position "absolute"
+                       :left "0"
+                       :top "6px"
+                       :font-size "12px"
+                       :font-weight "600"
+                       :color cat-color
+                       :white-space "nowrap"}}
+        (gstring/format "%.0f" filter-value)]])))
+
 (defn- diff-bar
   "Horizontal bar spanning between target-pct and spending-pct.
    Red when over budget, green when under."
@@ -358,19 +630,27 @@
 (defn category-treemap
   "Subscribes to :summed-categories. Renders a treemap at full width.
    Target arrow above and spending arrow below mark their positions.
-   Checkbox toggles target sub-rectangles on/off.
+   Checkboxes toggle target sub-rectangles and filter sub-treemaps on/off.
 
    Props:
      :height-ratio – optional (default 0.5)"
   []
-  (let [show-targets? (r/atom false)]
+  (let [show-targets? (r/atom false)
+        show-filters? (r/atom false)]
     (fn [{:keys [height-ratio] :or {height-ratio 0.5}}]
       (let [categories @(subscribe [:summed-categories])
+            full-categories @(subscribe [:categories])
+            period-txns @(subscribe [:period-transactions])
             period     @(subscribe [:period])
+            filter-path @(subscribe [:filter-path])
+            selected-tag @(subscribe [:selected-tag])
+            balance-data @(subscribe [:balance])
+            balance (:available-balance balance-data)
             single-month? (= :month (:period-type period))
             targets?   (and single-month? @show-targets?)
+            filters?   @show-filters?
             visible    (->> categories
-                            (remove #(excluded-ids (:id %)))
+                            (remove #(layout/excluded-ids (:id %)))
                             (filter #(or (neg? (:amount %))
                                          (and targets? (parse-target (:target %)))))
                             (filter #(or (pos? (Math/abs (:amount %)))
@@ -386,11 +666,37 @@
             spending-pct   (if targets?
                              (when (pos? total-area) (* 100 (/ total-spending total-area)))
                              100)
-            diff-value     (- total-spending target-sum)]
+            diff-value     (- total-spending target-sum)
+
+            ;; Compute filter-path bar data
+            fp-cat-name    (when (>= (count filter-path) 1) (first filter-path))
+            fp-filter-name (when (= (count filter-path) 2) (second filter-path))
+            fp-cat         (when fp-cat-name
+                             (some #(when (= (:name %) fp-cat-name) %) visible))
+            fp-color       (when fp-cat (or (:color fp-cat) "#9ca3af"))
+            fp-value       (when fp-cat-name
+                             (if fp-filter-name
+                               ;; Sub-filter selected: sum matching transactions
+                               (let [full-cat (some #(when (= (:name %) fp-cat-name) %) full-categories)
+                                     cat-txns (filter #(= (:category-id %) (:id fp-cat)) period-txns)]
+                                 (when full-cat
+                                   (reduce + 0
+                                           (map #(Math/abs (:amount %))
+                                                (filter #(category/match-fun (:description %) fp-filter-name) cat-txns)))))
+                               ;; Category selected: use category amount
+                               (when fp-cat (Math/abs (:amount fp-cat)))))
+
+            ;; Compute selected-tag bar data
+            tag-value      (when selected-tag
+                             (let [tag-id (:id selected-tag)]
+                               (reduce + 0
+                                       (map #(Math/abs (:amount %))
+                                            (filter #(some #{tag-id} (:tag-ids %)) period-txns)))))
+            tag-bar-color  (when selected-tag (:color selected-tag))]
         [:div
-         (when single-month?
-           [:div {:style {:display "flex" :align-items "center" :gap "6px"
-                          :margin-bottom "6px"}}
+         [:div {:style {:display "flex" :align-items "center" :gap "12px"
+                        :margin-bottom "6px"}}
+          (when single-month?
             [:label {:style {:display "flex" :align-items "center" :gap "4px"
                              :font-size "13px" :color "#555" :cursor "pointer"
                              :user-select "none"}}
@@ -398,17 +704,103 @@
                       :checked targets?
                       :on-change #(swap! show-targets? not)
                       :style {:cursor "pointer"}}]
-             "Vis budsjett"]])
+             "Vis budsjett"])
+          [:label {:style {:display "flex" :align-items "center" :gap "4px"
+                           :font-size "13px" :color "#555" :cursor "pointer"
+                           :user-select "none"}}
+           [:input {:type "checkbox"
+                    :checked filters?
+                    :on-change #(swap! show-filters? not)
+                    :style {:cursor "pointer"}}]
+           "Vis filtre"]
+          [:span {:style {:margin-left "auto" :font-size "13px" :color "#888"}}
+           "Konto: "
+           [:span {:style {:font-weight "600" :color "#555"}}
+            (if balance (gstring/format "%.0f kr" balance) "—")]]]
+         (when (or targets? filters? selected-tag)
+           [:div {:style {:display "flex" :flex-wrap "wrap" :align-items "center" :gap "12px"
+                          :margin-bottom "4px" :font-size "11px" :color "#888"}}
+            (when targets?
+              [:<>
+               [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
+                [:div {:style {:width "12px" :height "12px" :background-color "#9ca3af"
+                               :border-radius "2px"}}]
+                [:div {:style {:width "12px" :height "12px" :border-radius "2px"
+                               :background-color (lighten-color "#9ca3af" 0.5)}}]
+                "Budsjett"]
+               [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
+                [:div {:style {:width "12px" :height "12px" :border-radius "2px"
+                               :background "repeating-linear-gradient(45deg, transparent, transparent 2px, #6b7280 2px, #6b7280 3px)"}}]
+                "Over budsjett"]])
+            (when filters?
+              [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
+               [:div {:style {:width "12px" :height "12px" :border-radius "2px"
+                               :border "1px solid #ccc"
+                               :background "linear-gradient(135deg, #9ca3af 50%, #b0b8c4 50%)"}}]
+               "Underkategorier"])
+            (when selected-tag
+              [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
+               [:div {:style {:width "12px" :height "12px" :border-radius "2px"
+                               :background (str "repeating-linear-gradient(45deg, transparent, transparent 4px, "
+                                                (:color selected-tag) " 4px, " (:color selected-tag) " 6px)")}}]
+               (:name selected-tag)])])
          (when targets?
            [:div {:style {:position "relative" :height "28px" :margin-bottom "2px"}}
             (when target-pct
               [treemap-arrow-above target-pct (gstring/format "%.0f" target-sum)])])
-         [treemap {:categories    categories
-                   :pct-base      pct-base
-                   :show-targets? targets?
-                   :height-ratio  height-ratio}]
+         [treemap {:categories           categories
+                   :pct-base             pct-base
+                   :show-targets?        targets?
+                   :show-filters?        filters?
+                   :full-categories      full-categories
+                   :period-transactions  period-txns
+                   :selected-tag         selected-tag
+                   :height-ratio         height-ratio}]
          [:div {:style {:position "relative" :height "28px" :margin-top "2px"}}
           (when (and spending-pct (pos? total-spending))
             [treemap-arrow-below spending-pct (gstring/format "%.0f" total-spending)])]
+         (when (and fp-value (pos? fp-value) (pos? total-spending))
+           [filter-path-bar fp-value total-spending fp-color])
+         (when (and tag-value (pos? tag-value) (pos? total-spending))
+           (let [bar-pct (min 100 (* 100 (/ tag-value total-spending)))]
+             [:div {:style {:position "relative" :height "22px" :margin-top "2px"}}
+              [:div {:style {:position "absolute"
+                             :left "0"
+                             :width (str bar-pct "%")
+                             :top "0"
+                             :height "4px"
+                             :border-radius "2px"
+                             :background-color tag-bar-color}}]
+              [:span {:style {:position "absolute"
+                              :left "0"
+                              :top "6px"
+                              :font-size "12px"
+                              :font-weight "600"
+                              :color tag-bar-color
+                              :white-space "nowrap"}}
+               (gstring/format "%.0f" tag-value)]]))
          (when (and targets? target-pct spending-pct)
-           [diff-bar target-pct spending-pct diff-value])]))))
+           [diff-bar target-pct spending-pct diff-value])
+         (when (and targets? (pos? target-sum))
+           (let [now (js/Date.)
+                 current-month? (and single-month?
+                                     (= (.getFullYear (:start period)) (.getFullYear now))
+                                     (= (.getMonth (:start period)) (.getMonth now)))
+                 budgeted (filter #(pos? (or (parse-target (:target %)) 0)) visible)
+                 unbudgeted (remove #(pos? (or (parse-target (:target %)) 0)) visible)
+                 spent (reduce + 0 (map (fn [c]
+                                          (min (Math/abs (:amount c))
+                                               (or (parse-target (:target c)) 0)))
+                                        budgeted))
+                 overuse (reduce + 0 (map (fn [c]
+                                            (max 0 (- (Math/abs (:amount c))
+                                                      (or (parse-target (:target c)) 0))))
+                                          budgeted))
+                 uncategorized (reduce + 0 (map #(Math/abs (:amount %)) unbudgeted))
+                 remaining (max 0 (- target-sum spent))]
+             [budget-summary-bar {:spent spent
+                                  :overuse overuse
+                                  :uncategorized uncategorized
+                                  :remaining remaining
+                                  :balance balance
+                                  :current-month? current-month?}]))]))))

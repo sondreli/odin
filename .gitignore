@@ -2,3 +2,15 @@ public/js/cljs-runtime/
 public/js/main.js
 public/js/manifest.edn
 node_modules
+
+# Mobile (React Native + shadow-cljs)
+mobile/out/
+mobile/Odin/cljs-out/
+mobile/Odin/ios/Pods/
+mobile/Odin/ios/build/
+mobile/Odin/ios/*.xcworkspace/xcuserdata/
+mobile/Odin/android/.gradle/
+mobile/Odin/android/build/
+mobile/Odin/android/app/build/
+mobile/Odin/.metro-health-check*
+mobile/Odin/.expo/

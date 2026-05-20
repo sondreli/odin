@@ -26,19 +26,45 @@
       (.getDate d)
       (+ (* (.getFullYear d) 100) (.getMonth d)))))
 
+(defn- all-period-keys
+  "Generate all expected group keys for a period."
+  [granularity period]
+  (if (= granularity :day)
+    (let [start (:start period)
+          end (:end period)]
+      (loop [d (js/Date. (.getTime start)) ks []]
+        (if (>= (.getTime d) (.getTime end))
+          ks
+          (recur (js/Date. (.getFullYear d) (.getMonth d) (inc (.getDate d)))
+                 (conj ks (.getDate d))))))
+    (let [start (:start period)
+          end (:end period)]
+      (loop [d (js/Date. (.getTime start)) ks []]
+        (if (>= (.getTime d) (.getTime end))
+          ks
+          (recur (js/Date. (.getFullYear d) (inc (.getMonth d)) 1)
+                 (conj ks (+ (* (.getFullYear d) 100) (.getMonth d)))))))))
+
 (defn- compute-data-points
   "Given transactions, categories, tags, period, and an expression AST,
    computes data points [{:label ... :value ... :transactions ... :var-map ...}]."
   [transactions categories tags period ast]
-  (when (and ast (not (:error ast)) (seq transactions))
+  (when (and ast (not (:error ast)))
     (let [granularity (period-granularity period)
           label-fn (group-label-fn granularity)
           grouped (group-by #(transaction-group-key granularity %) transactions)
-          sorted-keys (sort (keys grouped))]
+          all-keys (all-period-keys granularity period)
+          sorted-keys (sort all-keys)]
       (mapv (fn [k]
-              (let [txns (get grouped k)
-                    sample-date (:date (first txns))
-                    label (label-fn sample-date)
+              (let [txns (get grouped k [])
+                    label (if (seq txns)
+                            (label-fn (:date (first txns)))
+                            ;; Generate label from key for empty periods
+                            (if (= granularity :day)
+                              (if (< k 10) (str "0" k) (str k))
+                              (let [year (quot k 100)
+                                    month (rem k 100)]
+                                (date/get-month-label (.getTime (js/Date. year month 1))))))
                     var-map (expr/build-variable-map txns categories tags)
                     value (expr/evaluate ast var-map)]
                 {:label label :value value :transactions txns :var-map var-map}))

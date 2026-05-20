@@ -1,129 +1,132 @@
 (ns odin.db-schemas2
-  (:require [cognitect.aws.client.api :as aws]
-            [odin.services.config-service :as config]))
+  (:require [odin.services.config-service :as config])
+  (:import [software.amazon.awssdk.services.dynamodb DynamoDbClient]
+           [software.amazon.awssdk.services.dynamodb.model
+            CreateTableRequest KeySchemaElement AttributeDefinition
+            ProvisionedThroughput GlobalSecondaryIndex Projection
+            ProjectionType KeyType ScalarAttributeType ResourceInUseException]
+           [software.amazon.awssdk.http.urlconnection UrlConnectionHttpClient]
+           [software.amazon.awssdk.auth.credentials StaticCredentialsProvider AwsBasicCredentials]
+           [software.amazon.awssdk.regions Region]
+           [java.net URI]))
 
-;; commands
-; docker run -p 8000:8000 amazon/dynamodb-local
-  ;; aws dynamodb get-item \
-    ;; --table-name UserTable \
-    ;; --key '{"UserId": {"S": "user456"}, "Timestamp": {"N": "30"}}' \
-    ;; --endpoint-url http://localhost:8000
-    ;; aws dynamodb scan \
-    ;;     --table-name UserTable \
-    ;;     --endpoint-url http://localhost:8000
-    ;; aws dynamodb put-item \
-    ;;     --table-name UserTable \
-    ;;     --item '{"UserId": {"S": "user456"}, "Name": {"S": "John Doe"}, "Timestamp": {"N": "30"}}' \
-    ;;     --endpoint-url http://localhost:8000
+(defn- ks [attr-name key-type]
+  (-> (KeySchemaElement/builder)
+      (.attributeName attr-name)
+      (.keyType key-type)
+      (.build)))
 
+(defn- ad [attr-name attr-type]
+  (-> (AttributeDefinition/builder)
+      (.attributeName attr-name)
+      (.attributeType attr-type)
+      (.build)))
 
+(defn- pt [rcu wcu]
+  (-> (ProvisionedThroughput/builder)
+      (.readCapacityUnits (long rcu))
+      (.writeCapacityUnits (long wcu))
+      (.build)))
 
-
-; partitionKey: userId (UUID)
-; sortKey: timestamp (long)
-; combination must be uniq
-; when similar timestamp, increment next with one
 (def transaction-schema
-  {:TableName "Transaction"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}  ; Partition key
-               {:AttributeName "Timestamp", :KeyType "RANGE"}  ; Sort key
-               ]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}  ; String type for UserId
-                          {:AttributeName "Timestamp", :AttributeType "S"}  ; Number type for Timestamp
-                          ]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}
-  ;;  :GlobalSecondaryIndexes [{:IndexName "TimestampIndex"
-  ;;                            :KeySchema [{:AttributeName "Timestamp", :KeyType "HASH"}
-  ;;                                        {:AttributeName "UserId", :KeyType "RANGE"}]
-  ;;                            :Projection {:ProjectionType "ALL"}
-  ;;                            :ProvisionedThroughput {:ReadCapacityUnits 3
-  ;;                                                    :WriteCapacityUnits 3}}]
-   })
-   
+  (-> (CreateTableRequest/builder)
+      (.tableName "Transaction")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Timestamp" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Timestamp" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
 (def category-schema
-  {:TableName "Category"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}  ; Partition key
-               {:AttributeName "Id", :KeyType "RANGE"}  ; Sort key
-               ]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}
-                          {:AttributeName "Id", :AttributeType "S"}   ; uuid
-                          ]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}})
+  (-> (CreateTableRequest/builder)
+      (.tableName "Category")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Id" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Id" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
 
 (def report-schema
-  {:TableName "Report"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}
-               {:AttributeName "Id", :KeyType "RANGE"}]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}
-                          {:AttributeName "Id", :AttributeType "S"}]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}})
+  (-> (CreateTableRequest/builder)
+      (.tableName "Report")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Id" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Id" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
 
 (def tag-schema
-  {:TableName "Tag"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}
-               {:AttributeName "Id", :KeyType "RANGE"}]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}
-                          {:AttributeName "Id", :AttributeType "S"}]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}})
+  (-> (CreateTableRequest/builder)
+      (.tableName "Tag")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Id" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Id" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
 
 (def filter-schema
-  {:TableName "Filter"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}
-               {:AttributeName "Id", :KeyType "RANGE"}]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}
-                          {:AttributeName "Id", :AttributeType "S"}]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}})
+  (-> (CreateTableRequest/builder)
+      (.tableName "Filter")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Id" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Id" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
 
 (def user-schema
-  {:TableName "User"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}
-                          {:AttributeName "Email", :AttributeType "S"}]
-   :GlobalSecondaryIndexes [{:IndexName "EmailIndex"
-                             :KeySchema [{:AttributeName "Email", :KeyType "HASH"}]
-                             :Projection {:ProjectionType "ALL"}
-                             :ProvisionedThroughput {:ReadCapacityUnits 5
-                                                     :WriteCapacityUnits 5}}]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}})
+  (-> (CreateTableRequest/builder)
+      (.tableName "User")
+      (.keySchema [(ks "UserId" KeyType/HASH)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Email" ScalarAttributeType/S)])
+      (.globalSecondaryIndexes
+        [(-> (GlobalSecondaryIndex/builder)
+             (.indexName "EmailIndex")
+             (.keySchema [(ks "Email" KeyType/HASH)])
+             (.projection (-> (Projection/builder) (.projectionType ProjectionType/ALL) (.build)))
+             (.provisionedThroughput (pt 5 5))
+             (.build))])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
+(def loan-schema
+  (-> (CreateTableRequest/builder)
+      (.tableName "Loan")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Id" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Id" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
 
 (def account-schema
-  {:TableName "Account"
-   :KeySchema [{:AttributeName "UserId", :KeyType "HASH"}
-               {:AttributeName "AccountId", :KeyType "RANGE"}]
-   :AttributeDefinitions [{:AttributeName "UserId", :AttributeType "S"}
-                          {:AttributeName "AccountId", :AttributeType "S"}]
-   :ProvisionedThroughput {:ReadCapacityUnits 5
-                           :WriteCapacityUnits 5}})
+  (-> (CreateTableRequest/builder)
+      (.tableName "Account")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "AccountId" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "AccountId" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
 
-;; Function to create the table with the defined schema
 (defn create-table [client]
-  (let [transaction-response (aws/invoke client {:op :CreateTable :request transaction-schema})
-        category-response (aws/invoke client {:op :CreateTable :request category-schema})
-        report-response (aws/invoke client {:op :CreateTable :request report-schema})
-        tag-response (aws/invoke client {:op :CreateTable :request tag-schema})
-        filter-response (aws/invoke client {:op :CreateTable :request filter-schema})
-        user-response (aws/invoke client {:op :CreateTable :request user-schema})
-        account-response (aws/invoke client {:op :CreateTable :request account-schema})]
-    (println "Transaction table creation response:" transaction-response)
-    (println "Category table creation response:" category-response)
-    (println "Report table creation response:" report-response)
-    (println "Tag table creation response:" tag-response)
-    (println "Filter table creation response:" filter-response)
-    (println "User table creation response:" user-response)
-    (println "Account table creation response:" account-response)))
+  (doseq [[name schema] [["Transaction" transaction-schema]
+                          ["Category"    category-schema]
+                          ["Report"      report-schema]
+                          ["Tag"         tag-schema]
+                          ["Filter"      filter-schema]
+                          ["User"        user-schema]
+                          ["Account"     account-schema]
+                          ["Loan"        loan-schema]]]
+    (try
+      (let [response (.createTable client schema)]
+        (println name "table created:" response))
+      (catch Exception e
+        (if (instance? software.amazon.awssdk.services.dynamodb.model.ResourceInUseException e)
+          (println name "table already exists, skipping.")
+          (throw e))))))
 
 (defn -main [& args]
-  (let [dynamodb-client (if config/dynamodb-endpoint
-                          (let [uri (java.net.URI. config/dynamodb-endpoint)]
-                            (aws/client {:api :dynamodb
-                                         :endpoint-override {:protocol (keyword (.getScheme uri))
-                                                             :hostname (.getHost uri)
-                                                             :port (.getPort uri)}}))
-                          (aws/client {:api :dynamodb}))]
+  (let [dynamodb-client (let [http-client (-> (UrlConnectionHttpClient/builder) (.build))
+                              builder (-> (DynamoDbClient/builder)
+                                          (.httpClient http-client)
+                                          (.region (Region/of (or (System/getenv "AWS_REGION") "eu-north-1"))))]
+                          (if @config/dynamodb-endpoint
+                            (-> builder
+                                (.endpointOverride (URI. @config/dynamodb-endpoint))
+                                (.credentialsProvider
+                                  (StaticCredentialsProvider/create
+                                    (AwsBasicCredentials/create "local" "local")))
+                                (.build))
+                            (.build builder)))]
     (create-table dynamodb-client)))

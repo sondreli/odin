@@ -15,11 +15,13 @@
                 (apply +))})
 
 (defn sum-month [[mnt transactions]]
-  (->> transactions
-       (group-by #(-> % :category-id))
-       (seq)
-       (map sum-category)
-       (map #(assoc % :month mnt))))
+  (if (empty? transactions)
+    [{:category-id nil :amount 0 :month mnt}]
+    (->> transactions
+         (group-by #(-> % :category-id))
+         (seq)
+         (map sum-category)
+         (map #(assoc % :month mnt)))))
 
 (defn make-index [data & key-funcs]
   (if (-> key-funcs count (= 0))
@@ -107,9 +109,22 @@
     ))
 
 (defn to-iso-date [date]
-  (let [[year month] (s/split date #"-")
-        label->num {"Jan" "01" "Feb" "02" "Mar" "03" "Apr" "04" "Mai" "05" "Jun" "06" "Jul" "07" "Aug" "08" "Sep" "09" "Okt" "10" "Nov" "11" "Des" "12"}]
-    (str year "-" (get label->num month))))
+  (let [parts (s/split date #"-")
+        label->num {"Jan" "01" "Feb" "02" "Mar" "03" "Apr" "04"
+                    "Mai" "05" "Jun" "06" "Jul" "07" "Aug" "08"
+                    "Sep" "09" "Okt" "10" "Nov" "11" "Des" "12"
+                    "Q1" "01" "Q2" "04" "Q3" "07" "Q4" "10"}]
+    (cond
+      ;; 4-digit year (year bucket: "2026")
+      (and (= 1 (count parts)) (= 4 (count (first parts))))
+      (first parts)
+
+      ;; yy-Mon or yy-Qn (month bucket or quarter bucket)
+      (= 2 (count parts))
+      (str (first parts) "-" (get label->num (second parts) "00"))
+
+      ;; day-of-month ("01".."31") or anything else: pass through
+      :else date)))
 
 (defn x-scale [data]
   (let [groupSort (d3/groupSort data
@@ -132,15 +147,14 @@
                   (.padding 0.1))]
     scale))
 
-(defn y-scale [series height]
+(defn y-scale [series height marginBottom]
   (let [max-val (d3/max series (fn [d] (d3/max d (fn [d] (get d 1)))))
         min-val (d3/min series (fn [d] (d3/min d (fn [d] (get d 0)))))
         max (if (and (some? max-val) (not (js/isNaN max-val))) max-val 0)
         min (if (and (some? min-val) (not (js/isNaN min-val))) min-val 0)
         ;; avoid degenerate domain when min=max (e.g. empty data)
         [domain-min domain-max] (if (= min max) [(- min 1) (+ max 1)] [min max])
-        marginBottom 20
-        marginTop 10]
+        marginTop 24]
     (-> d3
         .scaleLinear
         (.domain (clj->js [domain-min domain-max]))
@@ -172,9 +186,10 @@
 
 (defn make-chart [data series color category-map period]
   (let [x (x-scale data)
-        height 500
-        y (y-scale series height)
-        marginBottom 20
+        narrow? (< (.bandwidth x) 40)
+        marginBottom (if narrow? 60 20)
+        height (if narrow? 540 500)
+        y (y-scale series height marginBottom)
         marginLeft 40
         month-index (make-index data :month)
         div (-> d3
@@ -248,13 +263,19 @@
                                      (dispatch [:navigate [sub-period :table [category]]]))))))
                 )
         ; horizontal axis
+        tilt? (< (.bandwidth x) 40)
         svg2 (-> d3
                  (.select "#mychart svg")
                  (.append "g")
                  (.attr "transform" (str "translate(0," (- height marginBottom) ")"))
                  (.attr "fill" "currentColor")
                  (.call (-> d3 (.axisBottom x) (.tickSizeOuter 0)))
-                 (.call (fn [g] (-> g (.selectAll ".domain") (.remove))))
+                 (.call (fn [g]
+                          (-> g (.selectAll ".domain") (.remove))
+                          (when tilt?
+                            (-> g (.selectAll ".tick text")
+                                (.style "text-anchor" "end")
+                                (.attr "transform" "rotate(-45,0,9)")))))
                  (.selectAll ".tick")
                  (.data (.domain x))
                  (.on "mouseover" (fn [event d]
@@ -262,7 +283,7 @@
                                                               (filter #(-> % :amount pos?))
                                                               (map :amount)
                                                               (apply +)
-                                                              (* -1)) 
+                                                              (* -1))
                                           sum-pos-amount (->> (get month-index d)
                                                               (filter #(-> % :amount neg?))
                                                               (map :amount)
@@ -282,10 +303,40 @@
                  (.append "g")
                  (.attr "transform" (str "translate(" marginLeft ",0)"))
                  (.call (-> d3 (.axisLeft y) (.ticks nil "s")))
-                 (.call (fn [g] (-> g (.selectAll ".domain") (.remove))))
-                 )
-        ;; color-svg (.assign js/Object (.node svg) (clj->js {"scales" color}))
-        ]
+                 (.call (fn [g] (-> g (.selectAll ".domain") (.remove)))))
+
+        ; bar total labels
+        bar-totals (->> (.domain x)
+                        (map (fn [month]
+                               (let [items (get month-index month)
+                                     pos-sum (->> items (filter #(pos? (:amount %))) (map :amount) (reduce + 0))
+                                     neg-sum (->> items (filter #(neg? (:amount %))) (map :amount) (reduce + 0))]
+                                 {:month month :pos-sum pos-sum :neg-sum neg-sum}))))
+        _ (-> d3
+              (.select "#mychart svg")
+              (.append "g")
+              (.selectAll "text.bar-total")
+              (.data (clj->js bar-totals))
+              (.join "text")
+              (.attr "class" "bar-total")
+              (.attr "x" (fn [d] (+ (.call x nil (g/get d "month")) (/ (.bandwidth x) 2))))
+              (.attr "y" (fn [d]
+                           (let [pos (g/get d "pos-sum")]
+                             (if (pos? pos) (- (y pos) 4) (- (y 0) 4)))))
+              (.attr "text-anchor" (if tilt? "start" "middle"))
+              (.attr "font-size" "11px")
+              (.attr "fill" "#555")
+              (#(if tilt?
+                  (-> % (.attr "transform" (fn [d]
+                          (let [cx (+ (.call x nil (g/get d "month")) (/ (.bandwidth x) 2))
+                                pos (g/get d "pos-sum")
+                                cy (if (pos? pos) (- (y pos) 4) (- (y 0) 4))]
+                            (str "rotate(-45," cx "," cy ")")))))
+                  %))
+              (.text (fn [d]
+                       (let [pos (g/get d "pos-sum")]
+                         (when (pos? pos)
+                           (gstring/format "%.0f" pos))))))]
     svg3))
 
 (defn period-length [period]
@@ -308,15 +359,83 @@
            (-> transaction :amount neg?)) (assoc transaction :category-id "ukategorisert-out")
       :else transaction))
 
+(defn- all-day-labels
+  "Generate all day labels (01..28/29/30/31) for a month period."
+  [period]
+  (let [start (:start period)
+        end (:end period)
+        start-day (.getDate start)
+        ;; end is exclusive (first of next month), so last day = end - 1 day
+        last-day (.getDate (js/Date. (- (.getTime end) 1)))]
+    (mapv #(if (< % 10) (str "0" %) (str %))
+          (range start-day (inc last-day)))))
+
+(defn- all-month-labels
+  "Generate all month labels (yy-Mon) for a year/multi-year period."
+  [period]
+  (let [start (:start period)
+        end (:end period)]
+    (loop [d (js/Date. (.getTime start))
+           labels []]
+      (if (>= (.getTime d) (.getTime end))
+        labels
+        (let [label (date/get-month-label (.getTime d))]
+          (recur (js/Date. (.getFullYear d) (inc (.getMonth d)) 1)
+                 (conj labels label)))))))
+
+(defn- all-quarter-labels
+  "Generate quarter labels (yy-Qn) for every quarter touched by the period."
+  [period]
+  (let [start (:start period)
+        end (:end period)
+        ;; align to the start of the start month's quarter
+        q-month (* 3 (quot (.getMonth start) 3))]
+    (loop [d (js/Date. (.getFullYear start) q-month 1)
+           labels []]
+      (if (>= (.getTime d) (.getTime end))
+        labels
+        (recur (js/Date. (.getFullYear d) (+ 3 (.getMonth d)) 1)
+               (conj labels (date/get-quarter-label (.getTime d))))))))
+
+(defn- all-year-labels
+  "Generate year labels for every year touched by the period."
+  [period]
+  (let [start (:start period)
+        end (:end period)]
+    (loop [d (js/Date. (.getFullYear start) 0 1)
+           labels []]
+      (if (>= (.getTime d) (.getTime end))
+        labels
+        (recur (js/Date. (inc (.getFullYear d)) 0 1)
+               (conj labels (date/get-year-label (.getTime d))))))))
+
 (defn period-transactions->data [period-transactions period]
-  (let [period-length (period-length period)
-        label-fx (case period-length
-                   :month date/get-date-label
-                   :year date/get-month-label
-                   :else date/get-month-label)]
-    (->> period-transactions
-         (map add-uncategorized-ids)
-         (group-by #(-> % :date label-fx))
+  (let [pt (:period-type period)
+        _ (println "period-transactions->data period-type:" pt
+                   "start:" (.toISOString (:start period))
+                   "end:" (.toISOString (:end period)))
+        [label-fx all-labels]
+        (case pt
+          :month    [date/get-date-label    (all-day-labels period)]
+          :months   [date/get-month-label   (all-month-labels period)]
+          :quarter  [date/get-month-label   (all-month-labels period)]
+          :quarters [date/get-quarter-label (all-quarter-labels period)]
+          :year     [date/get-month-label   (all-month-labels period)]
+          :years    [date/get-year-label    (all-year-labels period)]
+          ;; legacy fallback by span-length when period-type is missing/unknown
+          (case (period-length period)
+            :month [date/get-date-label  (all-day-labels period)]
+            [date/get-month-label (all-month-labels period)]))
+        grouped (->> period-transactions
+                     (map add-uncategorized-ids)
+                     (group-by #(-> % :date label-fx)))
+        complete-grouped (reduce (fn [m label]
+                                   (if (contains? m label)
+                                     m
+                                     (assoc m label [])))
+                                 grouped
+                                 all-labels)]
+    (->> complete-grouped
          (seq)
          (mapcat sum-month)
          (map #(update % :amount (fn [a] (- a)))))))

@@ -1,75 +1,74 @@
-(ns odin.services.date-service)
+(ns odin.services.date-service
+  (:import [java.time Duration Instant LocalDateTime OffsetDateTime ZoneId ZonedDateTime]
+           [java.time.format DateTimeFormatter]
+           [java.time.temporal ChronoUnit]))
 
 (defn unixtime->localtime [unixtime]
-  (let [zoneIdOslo (java.time.ZoneId/of "Europe/Oslo")
-        inst (java.time.Instant/ofEpochMilli unixtime)
+  (let [zoneIdOslo (ZoneId/of "Europe/Oslo")
+        inst (Instant/ofEpochMilli unixtime)
         offset (-> zoneIdOslo .getRules (.getOffset inst))
         local-now (.atOffset inst offset)]
   local-now))
 
 (defn unixtime->iso-date [unixtime]
-  (let [zoneIdOslo (java.time.ZoneId/of "Europe/Oslo")
-        inst (java.time.Instant/ofEpochMilli unixtime)
+  (let [zoneIdOslo (ZoneId/of "Europe/Oslo")
+        inst (Instant/ofEpochMilli unixtime)
         offset (-> zoneIdOslo .getRules (.getOffset inst))
         local-now (.atOffset inst offset)
-        iso-date (.format local-now java.time.format.DateTimeFormatter/ISO_LOCAL_DATE)]
+        iso-date (.format ^OffsetDateTime local-now DateTimeFormatter/ISO_LOCAL_DATE)]
   iso-date))
 
 (defn localtime->unixtime [localtime]
-  (let [;formatter (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-ddTHH:mm:ss")
-        formatter java.time.format.DateTimeFormatter/ISO_DATE_TIME
-        local-date-time (. java.time.LocalDateTime parse localtime formatter)
-        instant (.atZone local-date-time (java.time.ZoneId/of "Europe/Oslo"))]
-    (.toEpochMilli (.toInstant instant))))
+  (let [formatter DateTimeFormatter/ISO_DATE_TIME
+        local-date-time (LocalDateTime/parse ^CharSequence localtime formatter)
+        instant (.atZone ^LocalDateTime local-date-time (ZoneId/of "Europe/Oslo"))]
+    (.toEpochMilli (.toInstant ^ZonedDateTime instant))))
 
 (defn iso-date-str->date [date-str]
   (let [datetime (str date-str "T00:00:00")
-        formatter java.time.format.DateTimeFormatter/ISO_DATE_TIME
-        local-date-time (. java.time.LocalDateTime parse datetime formatter)
-        date (.atZone local-date-time (java.time.ZoneId/of "Europe/Oslo"))]
+        formatter DateTimeFormatter/ISO_DATE_TIME
+        local-date-time (LocalDateTime/parse ^CharSequence datetime formatter)
+        date (.atZone ^LocalDateTime local-date-time (ZoneId/of "Europe/Oslo"))]
     date))
 
 (defn date->unixtime [date]
-  (.toEpochMilli (.toInstant date)))
-
-;; (localtime->unixtime "2024-12-01T00:00:00")
+  (if (instance? OffsetDateTime date)
+    (.toEpochMilli (.toInstant ^OffsetDateTime date))
+    (.toEpochMilli (.toInstant ^ZonedDateTime date))))
 
 (defn days-since-transaction [transaction-date]
-  (let [;last-db-transaction (get-last-transaction db)
-        now (java.time.ZonedDateTime/now)
+  (let [now (java.time.OffsetDateTime/now)
         transaction-time (unixtime->localtime transaction-date)
-        time-diff (java.time.Duration/between transaction-time now)]
+        time-diff (Duration/between transaction-time now)]
     (.toDays time-diff)))
 
 (defn x-days-ago [days]
-  (let [now (java.time.ZonedDateTime/now)
-        x (.minus now days (java.time.temporal.ChronoUnit/DAYS))]
+  (let [now (ZonedDateTime/now)
+        x (.minus ^ZonedDateTime now ^long days ChronoUnit/DAYS)]
     x))
 
 (defn subtract-days [date days]
-  (let [;now (java.time.ZonedDateTime/now)
-        x (.minus date days (java.time.temporal.ChronoUnit/DAYS))]
-    x))
+  (if (instance? OffsetDateTime date)
+    (.minus ^OffsetDateTime date ^long days ChronoUnit/DAYS)
+    (.minus ^ZonedDateTime date ^long days ChronoUnit/DAYS)))
 
 (defn add-days [date days]
-  (let [;now (java.time.ZonedDateTime/now)
-        x (.plus date days (java.time.temporal.ChronoUnit/DAYS))]
-    x))
+  (if (instance? OffsetDateTime date)
+    (.plus ^OffsetDateTime date ^long days ChronoUnit/DAYS)
+    (.plus ^ZonedDateTime date ^long days ChronoUnit/DAYS)))
 
 (defn find-retrieval-date [transaction-date]
   (let [days-since-last-db-transaction (days-since-transaction transaction-date)]
-    ;; (println days-since-last-db-transaction)
     (if (< 7 days-since-last-db-transaction)
-      ;; (x-days-ago days-since-last-db-transaction)
       (unixtime->localtime transaction-date)
       (x-days-ago 7))))
 
 (defn iso-date->local-datetime [iso-date]
   "Convert an ISO date string (e.g., '2024-01-15') to an OffsetDateTime object"
-  (let [zoneIdOslo (java.time.ZoneId/of "Europe/Oslo")
+  (let [zoneIdOslo (ZoneId/of "Europe/Oslo")
         datetime (str iso-date "T00:00:00")
-        formatter java.time.format.DateTimeFormatter/ISO_DATE_TIME
-        local-date-time (. java.time.LocalDateTime parse datetime formatter)
-        zoned-datetime (.atZone local-date-time zoneIdOslo)
-        offset-datetime (.toOffsetDateTime zoned-datetime)]
+        formatter DateTimeFormatter/ISO_DATE_TIME
+        local-date-time (LocalDateTime/parse ^CharSequence datetime formatter)
+        zoned-datetime (.atZone ^LocalDateTime local-date-time zoneIdOslo)
+        offset-datetime (.toOffsetDateTime ^ZonedDateTime zoned-datetime)]
     offset-datetime))

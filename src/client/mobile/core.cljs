@@ -19,10 +19,6 @@
 (defn init []
   "Register the Odin mobile root component with React Native. Call this from the app's index.js."
   (dispatch-sync [:initialise-db])
-  (dispatch [:request-all-transactions])
-  (dispatch [:request-all-categories])
-  (dispatch [:request-all-reports])
-  (dispatch [:request-all-tags])
+  (dispatch [:check-auth])
   (let [root-component (reagent/reactify-component views/odin-mobile-app)]
-    (.registerComponent AppRegistry "Odin" (fn [] root-component)))
-  (set! (.-init js/module.exports) init))
+    (.registerComponent AppRegistry "Odin" (fn [] root-component))))

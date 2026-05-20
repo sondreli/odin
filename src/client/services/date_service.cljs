@@ -167,6 +167,16 @@
         ]
     (str year "-" label)))
 
+(defn get-quarter-label [unixtime]
+  (let [date (js/Date. unixtime)
+        month (.getMonth date)
+        q (inc (quot month 3))
+        year (apply str (take-last 2 (-> date .getFullYear str)))]
+    (str year "-Q" q)))
+
+(defn get-year-label [unixtime]
+  (str (.getFullYear (js/Date. unixtime))))
+
 (defn day-label->period [label period]
   (let [date (js/Date. (.getTime (:start period)))
         day (js/parseInt label)
@@ -286,8 +296,11 @@
 
 (defn long-view-from-period [db period time-unit]
   (case (:period-type period)
-    :month (long-view-months period)
-    :months (long-view-all-months (-> db :period-selector :transaction-years))
-    :year (long-view-years (-> db :period-selector :transaction-years))
+    :month    (long-view-months period)
+    :months   (long-view-all-months (-> db :period-selector :transaction-years))
+    :quarter  (long-view-months period)
+    :quarters (long-view-all-months (-> db :period-selector :transaction-years))
+    :year     (long-view-years (-> db :period-selector :transaction-years))
+    :years    (long-view-years (-> db :period-selector :transaction-years))
     :all-years []
     nil))

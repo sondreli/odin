@@ -1,11 +1,10 @@
 (ns odin.services.auth-service
   (:require [clojure.data.json :as json]
             [clojure.string :as s]
+            [clojure.edn :as edn]
             [clojure.pprint :as pp]
-            [clojure.java.browse :as browse :refer [browse-url]]
             [clojure.java.io :as io]
-            [clj-http.client :as client]
-            [odin.services.config-service :as config]))
+            [odin.services.http-service :as http]))
 
 (def token_response_atom (atom {}))
 (def token_response_delivered_promise (promise))
@@ -13,13 +12,11 @@
            (fn [_ _ old new]
              (when-not (= old new) (deliver token_response_delivered_promise :changed))))
 
-(defn authenticate [state]
+(defn authenticate [client-id redirect-url state]
   (println "open in browser, authenticate and copy code from the return uri")
-  (let [redirect-url (config/redirect-uri "/auth/bank/callback")
-        url (format "https://api-auth.sparebank1.no/oauth/authorize?client_id=%s&state=%s&redirect_uri=%s&finInst=fid-ostlandet&response_type=code"
-                    config/client-id state redirect-url)]
-    (println url)
-    (browse-url url)))
+  (let [url (format "https://api-auth.sparebank1.no/oauth/authorize?client_id=%s&state=%s&redirect_uri=%s&finInst=fid-ostlandet&response_type=code"
+                    client-id state redirect-url)]
+    (println url)))
 
 (defn extract_authenticate_data [req]
   (if (:query-string req)
@@ -33,23 +30,21 @@
         key-values)
     nil))
 
-(defn make_token_request [code state redirect_uri]
-  (client/post "https://api-auth.sparebank1.no/oauth/token"
-               {:content-type "application/x-www-form-urlencoded"
-                :form-params {:client_id config/client-id
-                              :client_secret config/client-secret
-                              :code code
-                              :grant_type "authorization_code"
-                              :state state
-                              :redirect_uri redirect_uri}}))
+(defn make_token_request [code state redirect_uri client-id client-secret]
+  (http/http-post-form "https://api-auth.sparebank1.no/oauth/token"
+                       {:form-params (cond-> {:client_id client-id
+                                              :code code
+                                              :grant_type "authorization_code"
+                                              :state state
+                                              :redirect_uri redirect_uri}
+                                       client-secret (assoc :client_secret client-secret))}))
 
-(defn refresh_token_request [{refresh_token :refresh_token}]
-  (client/post "https://api-auth.sparebank1.no/oauth/token"
-               {:content-type "application/x-www-form-urlencoded"
-                :form-params {:client_id config/client-id
-                              :client_secret config/client-secret
-                              :refresh_token refresh_token
-                              :grant_type "refresh_token"}}))
+(defn refresh_token_request [client-id client-secret {refresh_token :refresh_token}]
+  (http/http-post-form "https://api-auth.sparebank1.no/oauth/token"
+                       {:form-params (cond-> {:client_id client-id
+                                              :refresh_token refresh_token
+                                              :grant_type "refresh_token"}
+                                       client-secret (assoc :client_secret client-secret))}))
 
 (defn token_response2token [response]
   (let [body_string (:body response)
@@ -63,20 +58,22 @@
     (assoc tokens :token_expires_at token_expires_at)))
 
 (defn store_tokens_to_file [tokens]
-  (spit "session_tokens.txt" (with-out-str (pr tokens)))
+  (try
+    (spit "session_tokens.txt" (with-out-str (pr tokens)))
+    (catch Exception _))
   tokens)
 
-(defn make_tokens [code state redirect_uri]
-  (let [token_response_json (make_token_request code state redirect_uri)
+(defn make_tokens [code state redirect_uri client-id client-secret]
+  (let [token_response_json (make_token_request code state redirect_uri client-id client-secret)
         tokens (-> token_response_json
                    token_response2token
                    add_token_expires_at)]
     (store_tokens_to_file tokens)))
 
-(defn refresh_tokens [tokens]
+(defn refresh_tokens [client-id client-secret tokens]
   (println "refresh_tokens")
   (try
-    (let [token_response_json (refresh_token_request tokens)
+    (let [token_response_json (refresh_token_request client-id client-secret tokens)
           tokens (-> token_response_json
                      token_response2token
                      add_token_expires_at)]
@@ -99,7 +96,7 @@
           (throw e))))))
 
 (defn read_tokens [token_file_name]
-  (read-string (slurp token_file_name)))
+  (edn/read-string (slurp token_file_name)))
 
 (defn no_stored_tokens [token_file_name]
   (not (.exists (io/file token_file_name))))
@@ -123,12 +120,10 @@
 ;; Account-based token operations (used by account-service)
 
 (defn refresh-account-tokens
-  "Refresh tokens for a specific account. Returns refreshed tokens.
-   store-fn should be (fn [tokens] ...) that persists the tokens."
-  [tokens store-fn]
+  [client-id client-secret tokens store-fn]
   (println "refresh_tokens for account")
   (try
-    (let [token_response_json (refresh_token_request tokens)
+    (let [token_response_json (refresh_token_request client-id client-secret tokens)
           new-tokens (-> token_response_json
                          token_response2token
                          add_token_expires_at)]
@@ -143,12 +138,9 @@
           (throw e))))))
 
 (defn get-tokens-for-account
-  "Get valid tokens for an account. Refreshes if expired.
-   load-fn: (fn [] tokens-map)
-   store-fn: (fn [tokens] ...)"
-  [load-fn store-fn]
+  [client-id client-secret load-fn store-fn]
   (let [tokens (load-fn)]
     (if (and tokens (not (is_token_expired tokens)))
       tokens
       (when tokens
-        (refresh-account-tokens tokens store-fn)))))
+        (refresh-account-tokens client-id client-secret tokens store-fn)))))

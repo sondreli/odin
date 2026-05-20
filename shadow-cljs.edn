@@ -1,9 +1,10 @@
 ;; shadow-cljs configuration
 {:source-paths ["src"]
 
- :dependencies[[reagent "0.9.1"]
-               [re-frame "0.10.7"]
+ :dependencies[[reagent "2.0.1"]
+               [re-frame "1.4.4"]
                [cljs-ajax "0.8.4"]
+               [com.cognitect/transit-cljs "0.8.280"]
                [bidi "2.1.6"]
                [kibu/pushy "0.3.8"]
                [com.cemerick/url "0.1.1"]
@@ -17,8 +18,7 @@
                 :asset-path "/js"
                 :target :browser
                 :modules {:main {:init-fn client.core/main!}}
-                ;; :js-options {:resolve {"d3" {:target :npm
-                ;;                              :require "d3/dist/d3.js"}}}
+                :release {:closure-defines {client.api/API_BASE "/api"}}
                 :devtools {:after-load client.core/reload!
                            :http-root "public"
                            :http-port 4000}}
@@ -27,6 +27,7 @@
                    :init-fn client.mobile.core/init
                    :output-dir "mobile/Odin/cljs-out"
                    :compiler-options {:infer-externs :auto}
+                   :release {:closure-defines {client.api/API_BASE "https://d2tmrmh08b6pvl.cloudfront.net/api"}}
                    :js-options {:resolve {"react-dom" {:target :global :global "null"}
                                           "d3"        {:target :global :global "null"}
                                           "choices.js" {:target :global :global "null"}}}}}

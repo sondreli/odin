@@ -1,5 +1,6 @@
 (ns client.events
   (:require [ajax.core :as ajax]
+            [ajax.transit :as ajax-transit]
             [day8.re-frame.http-fx]
             [client.api :as api]
             [client.db :refer [default-db]]
@@ -35,26 +36,30 @@
  :check-auth
  (fn [{db :db} _]
    (let [token (api/get-token)]
-     (if token
-       {:http-xhrio {:method          :get
-                     :uri             (api/uri "/auth/me")
-                     :headers         (api/auth-header)
-                     :response-format (ajax/json-response-format {:keywords? true})
-                     :on-success      [:check-auth-success]
-                     :on-failure      [:check-auth-failure]}
-        :db (assoc-in db [:auth :loading?] true)}
-       {:db db}))))
+     (cond
+       (nil? token) {:db db}
+       (api/token-expired? token) (do (api/remove-token!)
+                                      {:db (assoc db :auth {:token nil :user nil :loading? false :error nil})})
+       :else {:http-xhrio {:method          :get
+                            :uri             (api/uri "/auth/me")
+                            :headers         (api/auth-header)
+                            :response-format (ajax/json-response-format {:keywords? true})
+                            :on-success      [:check-auth-success]
+                            :on-failure      [:check-auth-failure]}
+              :db (assoc-in db [:auth :loading?] true)}))))
 
 (reg-event-fx
  :check-auth-success
  (fn [{db :db} [_ response]]
    (let [user (js->clj response)]
      {:db (assoc db :auth {:token (api/get-token) :user user :loading? false :error nil})
-      :dispatch-n [[:request-all-transactions]
+      :dispatch-n [[:request-recent-transactions]
                    [:request-all-categories]
                    [:request-all-reports]
                    [:request-all-tags]
-                   [:request-accounts]]})))
+                   [:request-all-loans]
+                   [:request-accounts]
+                   [:request-balance]]})))
 
 (reg-event-db
  :check-auth-failure
@@ -84,11 +89,13 @@
                            :user {:user-id (:user-id result) :email (:email result)}
                            :loading? false
                            :error nil})
-      :dispatch-n [[:request-all-transactions]
+      :dispatch-n [[:request-recent-transactions]
                    [:request-all-categories]
                    [:request-all-reports]
                    [:request-all-tags]
-                   [:request-accounts]]})))
+                   [:request-all-loans]
+                   [:request-accounts]
+                   [:request-balance]]})))
 
 (reg-event-db
  :login-failure
@@ -200,11 +207,36 @@
    db))
 
 (reg-event-fx
+ :request-balance
+ (fn [_ _]
+   {:http-xhrio {:method          :get
+                 :uri             (api/uri "/balance")
+                 :headers         (api/auth-header)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:balance-response]
+                 :on-failure      [:balance-failure]}}))
+
+(reg-event-db
+ :balance-response
+ (fn [db [_ response]]
+   (assoc db :balance (js->clj response))))
+
+(reg-event-db
+ :balance-failure
+ (fn [db [_ error]]
+   (println "Failed to fetch balance:" error)
+   db))
+
+(reg-event-fx
  :connect-account
- (fn [_ [_ provider account-name]]
+ (fn [_ [_ provider account-name client-id client-secret redirect-uri]]
    {:http-xhrio {:method          :post
                  :uri             (api/uri "/account/connect")
-                 :params          {:provider provider :account-name account-name}
+                 :params          {:provider provider
+                                   :account-name account-name
+                                   :client-id client-id
+                                   :client-secret client-secret
+                                   :redirect-uri redirect-uri}
                  :headers         (api/auth-header)
                  :format          (ajax/json-request-format)
                  :response-format (ajax/json-response-format {:keywords? true})
@@ -311,30 +343,88 @@
    (println "store-categories-failure" response)
    db))
 
+(defn- process-transactions [db transactions]
+  (let [transaction-years (date/transaction-years transactions)
+        period (:period db)
+        period-txns (date/period-transactions transactions period)
+        period (if (and (empty? period-txns) (seq transactions))
+                 (let [latest-date (js/Date. (:date (last transactions)))
+                       y (.getFullYear latest-date)
+                       m (.getMonth latest-date)]
+                   {:start (js/Date. y m 1)
+                    :end (js/Date. y (inc m) 1)
+                    :period-type :month})
+                 period)
+        updated-period-selector (-> db
+                                    :period-selector
+                                    (assoc :transaction-years transaction-years))]
+    (-> db
+      (assoc :all-transactions transactions)
+      (utils/apply-period updated-period-selector period))))
+
+(reg-event-fx
+ :process-recent-response
+ (fn
+   [{db :db} [_ response]]
+   (let [transactions (vec (:transactions response))]
+     {:db (-> db
+              (assoc :loading "done")
+              (process-transactions transactions))
+      :dispatch [:request-all-transactions]})))
+
+(reg-event-fx
+ :recent-transactions-failed
+ (fn [{db :db} [_ response]]
+   (println "Recent transactions failed, falling back to full load:" response)
+   {:db db
+    :dispatch [:request-all-transactions]}))
+
 (reg-event-db
  :process-response
  (fn
-   [db [_ response]]           ;; destructure the response from the event vector
-   (let [transactions (js->clj response)
-         _ (println "process-response transactions: " (count transactions))
-         _ (println "process-response top 10 transactions: " (take 10 transactions))
-         transaction-years (date/transaction-years transactions)
-         period (:period db)
-         updated-period-selector (-> db
-                                     :period-selector
-                                     (assoc :transaction-years transaction-years))]
-     (println "before db assoc")
+   [db [_ response]]
+   (let [transactions (vec (:transactions response))
+         new-count (:new-count response 0)
+         updated-count (:updated-count response 0)]
      (-> db
-       (assoc :loading "done") ;; take away that "Loading ..." UI
-       (assoc :all-transactions transactions)
-       (utils/apply-period updated-period-selector period)))))
+       (assoc :loading "done")
+       (dissoc :refreshing?)
+       (assoc :refresh-result {:new-count new-count :updated-count updated-count})
+       (process-transactions transactions)))))
+
+
+(reg-event-db
+ :set-display-option
+ (fn [db [_ option]]
+   (assoc-in db [:displayed-transactions-data :display-option] option)))
 
 (reg-event-db
  :bad-response
  (fn
    [db [_ response]]           ;; destructure the response from the event vector
-   (println "retreiving all transactions failed: " response)
- db))
+   (println "request failed:" response)
+   (-> db (assoc :loading "done") (dissoc :refreshing?))))
+
+(reg-event-fx
+ :refresh-data
+ (fn [{db :db} _]
+   {:db (assoc db :refreshing? true :refresh-result nil)
+    :dispatch-n [[:request-all-transactions]
+                 [:request-all-categories]
+                 [:request-balance]]}))
+
+(reg-event-db
+ :clear-refresh-result
+ (fn [db _]
+   (dissoc db :refresh-result)))
+
+(reg-event-db
+ :set-period
+ (fn [db [_ period]]
+   (let [db (utils/apply-period2 db nil period)]
+     (if (seq (:filter-path db))
+       (utils/apply-category db (:filter-path db))
+       db))))
 
 (reg-event-db
  :filter-transactions
@@ -585,10 +675,9 @@
    [{db :db} [_ category transaction]]
    (println "update-transactions-step-one" category)
    (let [tx-editor (:transaction-row-editor db)
-         filter-checked? (if (contains? tx-editor :filter-checked?)
-                           (:filter-checked? tx-editor)
-                           (:marked-by-filter? transaction))]
-    (if filter-checked?
+         new-sub-filter (:new-sub-filter tx-editor)
+         has-filter-value? (and (some? new-sub-filter) (not= new-sub-filter ""))]
+    (if has-filter-value?
       (update-category db category)
       (mark-one-transaction db category transaction)))))
 
@@ -734,12 +823,12 @@
  (fn
    [{db :db
      [_ category-name] :event} _]
-   (println "requesting categories")
    (let [filter-path (if (and (-> db :filter-path count (= 1))
                               (= category-name (-> db :filter-path first)))
                        []
                        [category-name])]
-     (dispatch [:navigate [nil :table filter-path]]))))
+     {:db (utils/apply-category db filter-path)
+      :dispatch [:navigate [nil nil filter-path]]})))
 
 ;; (defn add-textarea [tbody index builder-category]
 ;;   (let [row (. tbody insertRow (+ index 1))
@@ -878,6 +967,19 @@
            (assoc :builder-category cat))))))
 
 (reg-event-fx
+ :request-recent-transactions
+ (fn
+   [{db :db} _]
+   {:http-xhrio {:method          :get
+                 :uri             (api/uri "/transactions/recent")
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax-transit/transit-response-format)
+                 :on-success      [:process-recent-response]
+                 :on-failure      [:recent-transactions-failed]}
+    :db  (assoc db :loading "true")}))
+
+(reg-event-fx
  :request-all-transactions
  (fn
    [{db :db} _]
@@ -885,10 +987,12 @@
                  :uri             (api/uri "/transactions")
                  :headers         (api/auth-header)
                  :format          (ajax/json-request-format)
-                 :response-format (ajax/json-response-format {:keywords? true})
+                 :response-format (ajax-transit/transit-response-format)
                  :on-success      [:process-response]
                  :on-failure      [:bad-response]}
-    :db  (assoc db :loading "true")}))
+    :db  (if (seq (:all-transactions db))
+            db
+            (assoc db :loading "true"))}))
 
 (reg-event-fx
  :request-all-categories
@@ -973,6 +1077,84 @@
  (fn [db [_ error]]
    (println "Failed to delete tag:" error)
    db))
+
+;;
+;; Loans
+;;
+
+(reg-event-fx
+ :request-all-loans
+ (fn [_ _]
+   {:http-xhrio {:method          :get
+                 :uri             (api/uri "/loans")
+                 :headers         (api/auth-header)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:get-loans-response]
+                 :on-failure      [:get-loans-failure]}}))
+
+(reg-event-db
+ :get-loans-response
+ (fn [db [_ response]]
+   (assoc db :loans (js->clj response))))
+
+(reg-event-db
+ :get-loans-failure
+ (fn [db [_ error]]
+   (println "Failed to fetch loans:" error)
+   db))
+
+(reg-event-fx
+ :store-loan
+ (fn [_ [_ loan]]
+   {:http-xhrio {:method          :post
+                 :uri             (api/uri "/loan")
+                 :params          loan
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:store-loan-response]
+                 :on-failure      [:store-loan-failure]}}))
+
+(reg-event-fx
+ :store-loan-response
+ (fn [_ _]
+   {:dispatch [:request-all-loans]}))
+
+(reg-event-db
+ :store-loan-failure
+ (fn [db [_ error]]
+   (println "Failed to store loan:" error)
+   db))
+
+(reg-event-fx
+ :delete-loan
+ (fn [_ [_ loan-id]]
+   {:http-xhrio {:method          :delete
+                 :uri             (api/uri-with-id "/loan/" loan-id)
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:delete-loan-response]
+                 :on-failure      [:delete-loan-failure]}}))
+
+(reg-event-fx
+ :delete-loan-response
+ (fn [_ _]
+   {:dispatch [:request-all-loans]}))
+
+(reg-event-db
+ :delete-loan-failure
+ (fn [db [_ error]]
+   (println "Failed to delete loan:" error)
+   db))
+
+(reg-event-db
+ :select-tag
+ (fn [db [_ tag-id]]
+   (let [new-id (if (= tag-id (:selected-tag-id db)) nil tag-id)]
+     (-> db
+         (assoc :selected-tag-id new-id)
+         (utils/apply-category nil)))))
 
 ;;
 ;; Filters
@@ -1156,4 +1338,111 @@
  :toggle-transaction-tag-failure
  (fn [db [_ error]]
    (println "Failed to persist transaction tag:" error)
+   db))
+
+;; Multi-select events
+
+(reg-event-db
+ :toggle-multi-select-mode
+ (fn [db _]
+   (if (:multi-select db)
+     (dissoc db :multi-select)
+     (-> db
+         (assoc :multi-select {:selected-indices #{} :editing? false})
+         (dissoc :transaction-row-editor)))))
+
+(reg-event-db
+ :toggle-multi-select-row
+ (fn [db [_ index]]
+   (update-in db [:multi-select :selected-indices]
+              (fn [s] (if (contains? s index) (disj s index) (conj s index))))))
+
+(reg-event-db
+ :multi-select-edit
+ (fn [db _]
+   (assoc-in db [:multi-select :editing?] true)))
+
+(reg-event-db
+ :multi-select-cancel-edit
+ (fn [db _]
+   (-> db
+       (assoc-in [:multi-select :editing?] false)
+       (assoc-in [:multi-select :new-category] nil)
+       (assoc-in [:multi-select :new-tag-ids] #{}))))
+
+(reg-event-db
+ :multi-select-set-category
+ (fn [db [_ category-id]]
+   (assoc-in db [:multi-select :new-category]
+             (when (and category-id (not= category-id "") (not= category-id " ")) category-id))))
+
+(reg-event-db
+ :multi-select-toggle-tag
+ (fn [db [_ tag-id]]
+   (update-in db [:multi-select :new-tag-ids]
+              (fn [s] (let [s (or s #{})]
+                        (if (contains? s tag-id) (disj s tag-id) (conj s tag-id)))))))
+
+(reg-event-fx
+ :multi-select-save
+ (fn [{db :db} _]
+   (let [{:keys [selected-indices new-category new-tag-ids]} (:multi-select db)
+         transactions (vec (-> db :displayed-transactions-data :displayed-transactions))
+         updated-transactions
+         (reduce
+          (fn [acc idx]
+            (let [txn (get transactions idx)
+                  txn (if new-category
+                        (assoc txn :category-id new-category)
+                        txn)
+                  txn (if (seq new-tag-ids)
+                        (update txn :tag-ids (fn [existing]
+                                               (vec (distinct (concat (or existing []) new-tag-ids)))))
+                        txn)]
+              (conj acc txn)))
+          []
+          (sort selected-indices))
+         same-transaction? (fn [t updated]
+                             (some (fn [u] (and (= (:date t) (:date u))
+                                                (= (:amount t) (:amount u))
+                                                (= (:date-index t) (:date-index u)))) updated))
+         updated-set (set (map (juxt :date :amount :date-index) updated-transactions))
+         update-in-list (fn [txn-list]
+                          (mapv (fn [t]
+                                  (if (contains? updated-set [(:date t) (:amount t) (:date-index t)])
+                                    (or (some #(when (and (= (:date %) (:date t))
+                                                          (= (:amount %) (:amount t))
+                                                          (= (:date-index %) (:date-index t))) %)
+                                             updated-transactions)
+                                        t)
+                                    t))
+                                txn-list))
+         updated-all (update-in-list (:all-transactions db))
+         updated-period (update-in-list (:period-transactions db))
+         updated-displayed (update-in-list transactions)
+         categories (:categories db)
+         summed-categories (utils/sum-categoires categories updated-period)]
+     {:http-xhrio {:method          :post
+                   :uri             (api/uri "/transactions/update")
+                   :params          (clj->js updated-transactions)
+                   :headers         (api/auth-header)
+                   :format          (ajax/json-request-format)
+                   :response-format (ajax/json-response-format {:keywords? true})
+                   :on-success      [:multi-select-save-success]
+                   :on-failure      [:multi-select-save-failure]}
+      :db (-> db
+              (assoc :all-transactions updated-all)
+              (assoc :period-transactions updated-period)
+              (assoc :summed-categories summed-categories)
+              (assoc-in [:displayed-transactions-data :displayed-transactions] updated-displayed)
+              (dissoc :multi-select))})))
+
+(reg-event-db
+ :multi-select-save-success
+ (fn [db _] db))
+
+(reg-event-db
+ :multi-select-save-failure
+ (fn [db [_ error]]
+   (println "Failed to save multi-select:" error)
    db))

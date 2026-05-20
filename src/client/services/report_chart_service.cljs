@@ -44,15 +44,16 @@
                 (.range (clj->js [chart-height 0])))]
 
       ;; X axis
-      (-> svg
-          (.append "g")
-          (.attr "transform" (str "translate(0," chart-height ")"))
-          (.call (.axisBottom d3 x))
-          (.selectAll "text")
-          (.attr "transform" "rotate(-45)")
-          (.style "text-anchor" "end")
-          (.attr "dx" "-0.5em")
-          (.attr "dy" "0.15em"))
+      (let [tilt-axis? (< (.bandwidth x) 40)
+            axis-g (-> svg
+                       (.append "g")
+                       (.attr "transform" (str "translate(0," chart-height ")"))
+                       (.call (.axisBottom d3 x)))]
+        (when tilt-axis?
+          (-> axis-g
+              (.selectAll "text")
+              (.attr "transform" "rotate(-45,0,9)")
+              (.style "text-anchor" "end"))))
 
       ;; Y axis
       (-> svg (.append "g") (.call (.axisLeft d3 y)))
@@ -88,18 +89,26 @@
               (.on "click" (fn [_event d] (on-bar-click (.-label d)))))))
 
       ;; Value labels on bars
-      (-> svg
-          (.selectAll "text.val")
-          (.data (clj->js data-points))
-          (.join "text")
-          (.attr "class" "val")
-          (.attr "x" (fn [d] (+ (x (.-label d)) (/ (.bandwidth x) 2))))
-          (.attr "y" (fn [d] (let [v (.-value d)]
-                               (if (>= v 0) (- (y v) 4) (+ (y v) 14)))))
-          (.attr "text-anchor" "middle")
-          (.attr "font-size" "11px")
-          (.attr "fill" "#333")
-          (.text (fn [d] (gstring/format "%.0f" (.-value d))))))))
+      (let [tilt-vals? (< (.bandwidth x) 40)
+            val-labels (-> svg
+                           (.selectAll "text.val")
+                           (.data (clj->js data-points))
+                           (.join "text")
+                           (.attr "class" "val")
+                           (.attr "x" (fn [d] (+ (x (.-label d)) (/ (.bandwidth x) 2))))
+                           (.attr "y" (fn [d] (let [v (.-value d)]
+                                                (if (>= v 0) (- (y v) 4) (+ (y v) 14)))))
+                           (.attr "text-anchor" (if tilt-vals? "start" "middle"))
+                           (.attr "font-size" "11px")
+                           (.attr "fill" "#333")
+                           (.text (fn [d] (gstring/format "%.0f" (.-value d)))))]
+        (when tilt-vals?
+          (-> val-labels
+              (.attr "transform" (fn [d]
+                (let [cx (+ (x (.-label d)) (/ (.bandwidth x) 2))
+                      v (.-value d)
+                      cy (if (>= v 0) (- (y v) 4) (+ (y v) 14))]
+                  (str "rotate(-45," cx "," cy ")"))))))))))
 
 (defn draw-waterfall-chart
   "Renders a waterfall chart where each bar starts where the previous ended.
@@ -149,15 +158,16 @@
                 (.range (clj->js [chart-height 0])))]
 
       ;; X axis
-      (-> svg
-          (.append "g")
-          (.attr "transform" (str "translate(0," chart-height ")"))
-          (.call (.axisBottom d3 x))
-          (.selectAll "text")
-          (.attr "transform" "rotate(-45)")
-          (.style "text-anchor" "end")
-          (.attr "dx" "-0.5em")
-          (.attr "dy" "0.15em"))
+      (let [tilt-axis? (< (.bandwidth x) 40)
+            axis-g (-> svg
+                       (.append "g")
+                       (.attr "transform" (str "translate(0," chart-height ")"))
+                       (.call (.axisBottom d3 x)))]
+        (when tilt-axis?
+          (-> axis-g
+              (.selectAll "text")
+              (.attr "transform" "rotate(-45,0,9)")
+              (.style "text-anchor" "end"))))
 
       ;; Y axis
       (-> svg (.append "g") (.call (.axisLeft d3 y)))
@@ -206,15 +216,23 @@
               (.on "click" (fn [_event d] (on-bar-click (.-label d)))))))
 
       ;; Value labels
-      (-> svg
-          (.selectAll "text.val")
-          (.data (clj->js waterfall-data))
-          (.join "text")
-          (.attr "class" "val")
-          (.attr "x" (fn [d] (+ (x (.-label d)) (/ (.bandwidth x) 2))))
-          (.attr "y" (fn [d] (let [top (min (.-start d) (.-end d))]
-                               (- (y top) 4))))
-          (.attr "text-anchor" "middle")
-          (.attr "font-size" "11px")
-          (.attr "fill" "#333")
-          (.text (fn [d] (gstring/format "%.0f" (.-value d))))))))
+      (let [tilt-vals? (< (.bandwidth x) 40)
+            val-labels (-> svg
+                           (.selectAll "text.val")
+                           (.data (clj->js waterfall-data))
+                           (.join "text")
+                           (.attr "class" "val")
+                           (.attr "x" (fn [d] (+ (x (.-label d)) (/ (.bandwidth x) 2))))
+                           (.attr "y" (fn [d] (let [top (min (.-start d) (.-end d))]
+                                                (- (y top) 4))))
+                           (.attr "text-anchor" (if tilt-vals? "start" "middle"))
+                           (.attr "font-size" "11px")
+                           (.attr "fill" "#333")
+                           (.text (fn [d] (gstring/format "%.0f" (.-value d)))))]
+        (when tilt-vals?
+          (-> val-labels
+              (.attr "transform" (fn [d]
+                (let [cx (+ (x (.-label d)) (/ (.bandwidth x) 2))
+                      top (min (.-start d) (.-end d))
+                      cy (- (y top) 4)]
+                  (str "rotate(-45," cx "," cy ")"))))))))))

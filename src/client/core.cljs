@@ -12,13 +12,13 @@
             [client.db]
             [client.routes :as routes]
             [client.api :as api]
-            [reagent.core :as reagent]
+            [reagent.dom :as rdom]
             [re-frame.core :as rf :refer [dispatch-sync]]))
 
 
 (defn mount []
-  (reagent/render-component [client.views/odin-app]
-                       (.getElementById js/document "app")))
+  (rdom/render [client.views/odin-app]
+               (.getElementById js/document "app")))
 
 (defn reload! []
   (mount)

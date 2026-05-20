@@ -3,8 +3,8 @@
             [odin.services.user-service :as user]
             [odin.services.account-service :as account]
             [clojure.data.json :as json]
-            [clojure.java.io :as io]
-            [cognitect.aws.client.api :as aws])
+            [clojure.edn :as edn]
+            [clojure.java.io :as io])
   (:import [java.time Instant]))
 
 (def ^:private table-key-schemas
@@ -26,10 +26,7 @@
             old-key (cond-> {pk (get item pk)}
                       sk (assoc sk (get item sk)))]
         (db2/write-item table-name new-item)
-        (aws/invoke db2/dynamodb-client
-                    {:op :DeleteItem
-                     :request {:TableName table-name
-                               :Key old-key}})))
+        (db2/delete-item table-name old-key)))
     (println (str "  " table-name ": migrated " (count items) " items"))))
 
 (defn migrate-xxx-to-user!
@@ -53,7 +50,7 @@
 
     (when (.exists (io/file "session_tokens.txt"))
       (println "\nMigrating session_tokens.txt to Account record...")
-      (let [tokens (read-string (slurp "session_tokens.txt"))
+      (let [tokens (edn/read-string (slurp "session_tokens.txt"))
             acct (account/create-account new-user-id "sparebank1-ost" "Sparebank1 Østlandet")]
         (account/store-account-tokens new-user-id (:account-id acct) tokens)
         (println "Created account" (:account-id acct) "with tokens")))

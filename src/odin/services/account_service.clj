@@ -1,6 +1,5 @@
 (ns odin.services.account-service
   (:require [odin.db2 :as db2]
-            [odin.services.config-service :as config]
             [clojure.data.json :as json])
   (:import [java.time Instant]))
 
@@ -14,30 +13,32 @@
 (defn get-provider [provider-key]
   (get providers provider-key))
 
-(defn build-oauth-url [provider-key account-id]
-  (let [provider (get-provider provider-key)
-        redirect-uri (config/redirect-uri "/auth/bank/callback")]
+(defn build-oauth-url [provider-key account-id client-id redirect-uri]
+  (let [provider (get-provider provider-key)]
     (format "%s?client_id=%s&state=%s&redirect_uri=%s&finInst=%s&response_type=code"
             (:auth-url provider)
-            config/client-id
+            client-id
             account-id
             redirect-uri
             (:fin-inst provider))))
 
-(defn create-account [user-id provider-key account-name]
+(defn create-account [user-id provider-key account-name client-id client-secret redirect-uri]
   (let [account-id (str (java.util.UUID/randomUUID))
         now (str (Instant/now))
         account {:user-id user-id
                  :account-id account-id
                  :provider provider-key
                  :account-name (or account-name (:name (get-provider provider-key)))
+                 :client-id client-id
+                 :client-secret client-secret
+                 :redirect-uri redirect-uri
                  :created-at now}]
     (db2/put-account account)
     account))
 
 (defn get-user-accounts [user-id]
   (let [accounts (db2/get-accounts-for-user user-id)]
-    (mapv #(dissoc % :token-data) accounts)))
+    (mapv #(dissoc % :token-data :client-secret :redirect-uri) accounts)))
 
 (defn get-account-tokens [user-id account-id]
   (when-let [account (db2/get-account user-id account-id)]
@@ -59,16 +60,26 @@
 
 (defn connect-handler [request]
   (let [user-id (:user-id request)
-        {:keys [provider account-name]} (:body request)]
-    (if-not (get-provider provider)
+        body (:body request)
+        _ (println "connect-handler body:" (pr-str body))
+        {:keys [provider account-name client-id client-secret redirect-uri]} body]
+    (cond
+      (not (get-provider provider))
       {:status 400
        :headers {"Content-Type" "application/json"}
        :body (json/write-str {:error (str "Unknown provider: " provider)})}
-      (let [account (create-account user-id provider account-name)
-            oauth-url (build-oauth-url provider (:account-id account))]
+
+      (or (empty? client-id) (empty? client-secret) (empty? redirect-uri))
+      {:status 400
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str {:error "client-id, client-secret, and redirect-uri are required"})}
+
+      :else
+      (let [account (create-account user-id provider account-name client-id client-secret redirect-uri)
+            oauth-url (build-oauth-url provider (:account-id account) client-id redirect-uri)]
         {:status 200
          :headers {"Content-Type" "application/json"}
-         :body (json/write-str {:account account :oauth-url oauth-url})}))))
+         :body (json/write-str {:account (dissoc account :client-secret) :oauth-url oauth-url})}))))
 
 (defn accounts-handler [request]
   (let [user-id (:user-id request)
