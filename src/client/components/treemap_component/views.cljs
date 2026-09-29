@@ -450,68 +450,74 @@
         [:span {:class "budget-summary-remaining"} (fmt/format-amount remaining)]
         " igjen i budsjetterte kategorier"])]))
 
-(defn- spend-by-category
-  "Absolute spending per category id, counted from the period's transactions.
-   Uncategorised outflows are grouped under \"ukategorisert-out\". Ids are
-   strings so they match regardless of whether the category id was a keyword."
-  [transactions]
-  (reduce (fn [m txn]
-            (let [amt (:amount txn)]
-              (if (and (number? amt) (neg? amt))
-                (update m (or (:category-id txn) "ukategorisert-out")
-                        (fnil + 0) (Math/abs amt))
-                m)))
-          {}
-          transactions))
+(defn- category-spend
+  "Absolute spending for one summed category. Expenses are negative, which is
+   the same amount the treemap tile uses."
+  [category]
+  (let [a (:amount category)]
+    (if (and (number? a) (neg? a)) (Math/abs a) 0)))
+
+(defn- uncategorized-out-id? [id]
+  (= "ukategorisert-out" (str id)))
 
 (declare budget-summary-bar*)
 
 (defn- budget-summary-bar
-  "Summary bar under the treemap. Subscribes itself so it re-renders whenever
-   categories, transactions, the period or the balance change.
+  "Summary bar under the treemap. Subscribes to the same summed categories as
+   the treemap, so it redraws from those amounts after a reload as well as
+   when a transaction is categorised.
 
-   The 'Brukt' portion is one slice per budgeted category, in that category's
-   treemap colour. Overspend is the same colour with the treemap's diagonal
-   hatch. Ukategorisert uses the ukategorisert tile grey. Gjenstår is a light
-   green with a border."
+   Each category with spending is its own slice in that category's colour.
+   Only id ukategorisert-out is the grey Ukategorisert slice — other categories
+   without a budget target are still shown in their own colour, otherwise
+   moving money between them would leave the bar unchanged. Overspend uses the
+   treemap's diagonal hatch. Gjenstår is a light green with a border."
   []
   (fn []
     (let [categories @(subscribe [:summed-categories])
-          transactions @(subscribe [:period-transactions])
           period @(subscribe [:period])
           show-targets? @(subscribe [:treemap-show-targets?])
           balance (:available-balance @(subscribe [:balance]))
-          single-month? (= :month (:period-type period))
-          spend (spend-by-category transactions)]
+          single-month? (= :month (:period-type period))]
       (when (and single-month? show-targets?)
-        (budget-summary-bar* categories spend (some? transactions) balance period)))))
+        (budget-summary-bar* categories balance period)))))
 
 (defn- budget-summary-bar*
-  [categories spend live? balance period]
+  [categories balance period]
   (let [uncategorized-color "#9ca3af"
         rows (->> categories
                   (remove #(layout/excluded-ids (:id %)))
                   (mapv (fn [c]
                           (let [id (:id c)
-                                amount (if live?
-                                         (get spend id 0)
-                                         (let [a (:amount c)]
-                                           (if (and (number? a) (neg? a)) (Math/abs a) 0)))
+                                uncategorized? (uncategorized-out-id? id)
+                                amount (category-spend c)
                                 target (or (parse-target (:target c)) 0)]
                             {:id id
-                             :name (:name c)
-                             :color (or (:color c) uncategorized-color)
+                             :name (if uncategorized? "Ukategorisert" (:name c))
+                             :color (if uncategorized?
+                                      uncategorized-color
+                                      (or (:color c) uncategorized-color))
                              :amount amount
                              :target target
-                             :budgeted? (pos? target)}))))
+                             :uncategorized? uncategorized?
+                             :budgeted? (and (not uncategorized?) (pos? target))}))))
         budgeted (filterv :budgeted? rows)
-        unbudgeted (filterv #(and (not (:budgeted? %)) (pos? (:amount %))) rows)
+        ;; Named categories without a target. These used to be added into the
+        ;; grey total, so categorising an uncategorised transaction into one
+        ;; of them did not change any number on the bar.
+        named (->> rows
+                   (filter #(and (not (:budgeted? %))
+                                 (not (:uncategorized? %))
+                                 (pos? (:amount %))))
+                   (sort-by #(- (:amount %)))
+                   vec)
+        uncategorized (reduce + 0 (map :amount (filter :uncategorized? rows)))
         target-sum (reduce + 0 (map :target budgeted))
         spent (reduce + 0 (map (fn [c] (min (:amount c) (:target c))) budgeted))
         overuse (reduce + 0 (map (fn [c] (max 0 (- (:amount c) (:target c)))) budgeted))
-        uncategorized (reduce + 0 (map :amount unbudgeted))
+        named-sum (reduce + 0 (map :amount named))
         remaining (max 0 (- target-sum spent))
-        total (+ spent overuse uncategorized remaining)
+        total (+ spent overuse named-sum uncategorized remaining)
         now (js/Date.)
         current-month? (and (= :month (:period-type period))
                             (:start period)
@@ -536,6 +542,13 @@
             segments (cond-> [{:label "Brukt" :amount spent :seg-type :spent :pct (pct spent)}]
                        (pos? overuse)
                        (conj {:label "Overforbruk" :amount overuse :seg-type :overuse :pct (pct overuse)})
+                       (seq named)
+                       (into (mapv (fn [c]
+                                     {:label (:name c)
+                                      :amount (:amount c)
+                                      :seg-type :named
+                                      :pct (pct (:amount c))})
+                                   named))
                        (pos? uncategorized)
                        (conj {:label "Ukategorisert" :amount uncategorized :seg-type :uncategorized :pct (pct uncategorized)})
                        (pos? remaining)
@@ -578,6 +591,7 @@
             label-class (fn [seg-type]
                           (case seg-type
                             :spent "budget-label-spent"
+                            :named "budget-label-spent"
                             :overuse "budget-label-overuse"
                             :uncategorized "budget-label-uncategorized"
                             :remaining "budget-label-remaining"
@@ -613,7 +627,7 @@
                     :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
               (render-label seg narrow?)]))]
          
-         ^{:key (str spent "|" overuse "|" uncategorized "|" remaining)}
+         ^{:key (apply str (interpose "|" (map #(str (:id %) ":" (:amount %)) rows)))}
          [:div.budget-bar-segments
           (doall
            (for [c cat-segments
@@ -643,6 +657,16 @@
                              :top 0 :right 0 :bottom 0 :left 0
                              :background (str "repeating-linear-gradient(45deg, transparent, transparent 3px, "
                                               (:stripe-color c) " 3px, " (:stripe-color c) " 5px)")}}]]))
+          (doall
+           (for [c named]
+             ^{:key (str "named-" (:id c) "-" (:amount c))}
+             [:div {:title (str (:name c) " " (fmt/format-amount (:amount c)))
+                    :style {:flex-grow (:amount c)
+                            :flex-shrink 1
+                            :flex-basis "0%"
+                            :min-width 0
+                            :height "100%"
+                            :background-color (:color c)}}]))
           (when (pos? uncategorized)
             ^{:key (str "uncat-" uncategorized)}
             [:div {:title (str "Ukategorisert " (fmt/format-amount uncategorized))

@@ -77,31 +77,48 @@
       (filterv #(some #{selected-tag-id} (:tag-ids %)) filtered)
       filtered)))
 
+(defn- category-key
+  "Ids are compared as strings. The category picker submits a string, while a
+   category loaded from JSON may carry the same id as a keyword or number.
+   A miss used to throw inside + and abort the update, so the bar never moved."
+  [id]
+  (cond
+    (nil? id) nil
+    (keyword? id) (name id)
+    :else (str id)))
+
 (defn assoc-amount [category-map category-id transaction-amount]
-  (let [acc-amount (-> category-map (get category-id) :amount)]
-    (assoc-in category-map [category-id :amount] (+ acc-amount transaction-amount))))
+  (let [acc-amount (or (-> category-map (get category-id) :amount) 0)
+        amount (if (number? transaction-amount) transaction-amount 0)]
+    (assoc-in category-map [category-id :amount] (+ acc-amount amount))))
 
 (defn add-amount-to-amount-map [amount-map transaction]
-  (cond
+  (let [amount (:amount transaction)]
+    (cond
       (and (-> transaction :category-id nil?)
-           (-> transaction :amount pos?)) (assoc-amount amount-map "ukategorisert-in" (:amount transaction))
+           (number? amount)
+           (pos? amount)) (assoc-amount amount-map "ukategorisert-in" amount)
       (and (-> transaction :category-id nil?)
-           (-> transaction :amount neg?)) (assoc-amount amount-map "ukategorisert-out" (:amount transaction))
-      :else (assoc-amount amount-map (:category-id transaction) (:amount transaction))))
+           (number? amount)
+           (neg? amount)) (assoc-amount amount-map "ukategorisert-out" amount)
+      :else (let [k (category-key (:category-id transaction))]
+              (if (and k (contains? amount-map k) (number? amount))
+                (assoc-amount amount-map k amount)
+                amount-map)))))
 
 (defn sum-categoires [categories transactions]
   (let [extended-categories (conj categories
                                   {:id "ukategorisert-in" :name "ukategorisert-in"}
                                   {:id "ukategorisert-out" :name "ukategorisert-out"})
-        amount-map (into {} (map #(vector (:id %) {:amount 0}) extended-categories))
+        amount-map (into {} (map #(vector (category-key (:id %)) {:amount 0}) extended-categories))
         summed-amount-map (reduce add-amount-to-amount-map amount-map transactions)
   ;; _ (println "sum-categories: " extended-categories)
   ;; _ (println summed-amount-map)
         summed-categories (->> extended-categories ;(conj categories {:id "ukategorisert" :name "ukategorisert"})
-                               (map #(assoc % :amount (-> summed-amount-map (get (:id %)) :amount)))
+                               (map #(assoc % :amount (or (-> summed-amount-map (get (category-key (:id %))) :amount) 0)))
                                (sort-by :amount))
-        total-out (->> summed-categories (map :amount) (filter neg?) (apply +))
-        total-in (->> summed-categories (map :amount) (filter pos?) (apply +))
+        total-out (->> summed-categories (map :amount) (filter neg?) (reduce + 0))
+        total-in (->> summed-categories (map :amount) (filter pos?) (reduce + 0))
         accounting (concat summed-categories [{:id "out" :name "out" :amount total-out}
                                               {:id "in" :name "in" :amount total-in}])]
     accounting))
