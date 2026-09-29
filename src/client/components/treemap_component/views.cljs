@@ -539,9 +539,10 @@
                             :color base-color
                             :stripe-color (darken-color base-color 0.6)}))))
 
+            ;; Categories without a target sit with the other solid colours, before
+            ;; the overspend hatch. They used to be drawn after the diagonal lines,
+            ;; in the same stretch as Ukategorisert.
             segments (cond-> [{:label "Brukt" :amount spent :seg-type :spent :pct (pct spent)}]
-                       (pos? overuse)
-                       (conj {:label "Overforbruk" :amount overuse :seg-type :overuse :pct (pct overuse)})
                        (seq named)
                        (into (mapv (fn [c]
                                      {:label (:name c)
@@ -549,6 +550,8 @@
                                       :seg-type :named
                                       :pct (pct (:amount c))})
                                    named))
+                       (pos? overuse)
+                       (conj {:label "Overforbruk" :amount overuse :seg-type :overuse :pct (pct overuse)})
                        (pos? uncategorized)
                        (conj {:label "Ukategorisert" :amount uncategorized :seg-type :uncategorized :pct (pct uncategorized)})
                        (pos? remaining)
@@ -641,6 +644,16 @@
                             :height "100%"
                             :background-color (:color c)}}]))
           (doall
+           (for [c named]
+             ^{:key (str "named-" (:id c) "-" (:amount c))}
+             [:div {:title (str (:name c) " " (fmt/format-amount (:amount c)))
+                    :style {:flex-grow (:amount c)
+                            :flex-shrink 1
+                            :flex-basis "0%"
+                            :min-width 0
+                            :height "100%"
+                            :background-color (:color c)}}]))
+          (doall
            (for [c cat-segments
                  :when (pos? (:overuse c))]
              ^{:key (str "over-" (:id c) "-" (:overuse c))}
@@ -657,16 +670,6 @@
                              :top 0 :right 0 :bottom 0 :left 0
                              :background (str "repeating-linear-gradient(45deg, transparent, transparent 3px, "
                                               (:stripe-color c) " 3px, " (:stripe-color c) " 5px)")}}]]))
-          (doall
-           (for [c named]
-             ^{:key (str "named-" (:id c) "-" (:amount c))}
-             [:div {:title (str (:name c) " " (fmt/format-amount (:amount c)))
-                    :style {:flex-grow (:amount c)
-                            :flex-shrink 1
-                            :flex-basis "0%"
-                            :min-width 0
-                            :height "100%"
-                            :background-color (:color c)}}]))
           (when (pos? uncategorized)
             ^{:key (str "uncat-" uncategorized)}
             [:div {:title (str "Ukategorisert " (fmt/format-amount uncategorized))
