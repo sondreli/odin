@@ -797,8 +797,8 @@
                  current-month? (and single-month?
                                      (= (.getFullYear (:start period)) (.getFullYear now))
                                      (= (.getMonth (:start period)) (.getMonth now)))
-                 budgeted (filter #(pos? (or (parse-target (:target %)) 0)) visible)
-                 unbudgeted (remove #(pos? (or (parse-target (:target %)) 0)) visible)
+                 budgeted (vec (filter #(pos? (or (parse-target (:target %)) 0)) visible))
+                 unbudgeted (vec (remove #(pos? (or (parse-target (:target %)) 0)) visible))
                  spent (reduce + 0 (map (fn [c]
                                           (min (Math/abs (:amount c))
                                                (or (parse-target (:target c)) 0)))
@@ -809,6 +809,7 @@
                                           budgeted))
                  uncategorized (reduce + 0 (map #(Math/abs (:amount %)) unbudgeted))
                  remaining (max 0 (- target-sum spent))]
+             ^{:key (str spent "-" overuse "-" uncategorized "-" remaining)}
              [budget-summary-bar {:budgeted-categories budgeted
                                   :spent spent
                                   :overuse overuse
