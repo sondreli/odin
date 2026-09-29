@@ -450,43 +450,89 @@
         [:span {:class "budget-summary-remaining"} (fmt/format-amount remaining)]
         " igjen i budsjetterte kategorier"])]))
 
+(defn- spend-by-category
+  "Absolute spending per category id, counted from the period's transactions.
+   Uncategorised outflows are grouped under \"ukategorisert-out\". Ids are
+   strings so they match regardless of whether the category id was a keyword."
+  [transactions]
+  (reduce (fn [m txn]
+            (let [amt (:amount txn)]
+              (if (and (number? amt) (neg? amt))
+                (update m (or (:category-id txn) "ukategorisert-out")
+                        (fnil + 0) (Math/abs amt))
+                m)))
+          {}
+          transactions))
+
+(declare budget-summary-bar*)
+
 (defn- budget-summary-bar
-  "Summary bar showing budget breakdown with treemap-matching colors.
-   
-   The 'Brukt' portion is built from individual category segments using their
-   treemap colors. Overuse uses diagonal stripes matching the treemap's over-budget
-   hatching. Uncategorized uses the same grey as the treemap. Gjenstår is a light
-   faded color with subtle border.
-   
-   Props:
-     :budgeted-categories - vector of categories with :color, :amount, :target
-     :spent, :overuse, :uncategorized, :remaining - amounts for each segment
-     :balance, :current-month?, :target-sum - for equation display"
-  [{:keys [budgeted-categories spent overuse uncategorized remaining balance current-month? target-sum]}]
-  (let [total (+ spent overuse uncategorized remaining)
-        uncategorized-color "#9ca3af"]
+  "Summary bar under the treemap. Subscribes itself so it re-renders whenever
+   categories, transactions, the period or the balance change.
+
+   The 'Brukt' portion is one slice per budgeted category, in that category's
+   treemap colour. Overspend is the same colour with the treemap's diagonal
+   hatch. Ukategorisert uses the ukategorisert tile grey. Gjenstår is a light
+   green with a border."
+  []
+  (fn []
+    (let [categories @(subscribe [:summed-categories])
+          transactions @(subscribe [:period-transactions])
+          period @(subscribe [:period])
+          show-targets? @(subscribe [:treemap-show-targets?])
+          balance (:available-balance @(subscribe [:balance]))
+          single-month? (= :month (:period-type period))
+          spend (spend-by-category transactions)]
+      (when (and single-month? show-targets?)
+        (budget-summary-bar* categories spend (some? transactions) balance period)))))
+
+(defn- budget-summary-bar*
+  [categories spend live? balance period]
+  (let [uncategorized-color "#9ca3af"
+        rows (->> categories
+                  (remove #(layout/excluded-ids (:id %)))
+                  (mapv (fn [c]
+                          (let [id (:id c)
+                                amount (if live?
+                                         (get spend id 0)
+                                         (let [a (:amount c)]
+                                           (if (and (number? a) (neg? a)) (Math/abs a) 0)))
+                                target (or (parse-target (:target c)) 0)]
+                            {:id id
+                             :name (:name c)
+                             :color (or (:color c) uncategorized-color)
+                             :amount amount
+                             :target target
+                             :budgeted? (pos? target)}))))
+        budgeted (filterv :budgeted? rows)
+        unbudgeted (filterv #(and (not (:budgeted? %)) (pos? (:amount %))) rows)
+        target-sum (reduce + 0 (map :target budgeted))
+        spent (reduce + 0 (map (fn [c] (min (:amount c) (:target c))) budgeted))
+        overuse (reduce + 0 (map (fn [c] (max 0 (- (:amount c) (:target c)))) budgeted))
+        uncategorized (reduce + 0 (map :amount unbudgeted))
+        remaining (max 0 (- target-sum spent))
+        total (+ spent overuse uncategorized remaining)
+        now (js/Date.)
+        current-month? (and (= :month (:period-type period))
+                            (:start period)
+                            (= (.getFullYear (:start period)) (.getFullYear now))
+                            (= (.getMonth (:start period)) (.getMonth now)))]
     (when (pos? total)
       (let [pct (fn [v] (* 100 (/ v total)))
             
             cat-segments
-            (->> budgeted-categories
-                 (filter #(pos? (Math/abs (:amount %))))
-                 (sort-by #(Math/abs (:amount %)) >)
+            (->> budgeted
+                 (filter #(pos? (:amount %)))
+                 (sort-by #(- (:amount %)))
                  (mapv (fn [c]
-                         (let [cat-spent (min (Math/abs (:amount c))
-                                              (or (parse-target (:target c)) 0))
-                               cat-over (max 0 (- (Math/abs (:amount c))
-                                                  (or (parse-target (:target c)) 0)))
-                               base-color (or (:color c) "#9ca3af")]
-                           {:name (:name c)
-                            :spent cat-spent
-                            :overuse cat-over
+                         (let [base-color (:color c)]
+                           {:id (:id c)
+                            :name (:name c)
+                            :spent (min (:amount c) (:target c))
+                            :overuse (max 0 (- (:amount c) (:target c)))
                             :color base-color
                             :stripe-color (darken-color base-color 0.6)}))))
-            
-            total-cat-spent (reduce + 0 (map :spent cat-segments))
-            total-cat-over (reduce + 0 (map :overuse cat-segments))
-            
+
             segments (cond-> [{:label "Brukt" :amount spent :seg-type :spent :pct (pct spent)}]
                        (pos? overuse)
                        (conj {:label "Overforbruk" :amount overuse :seg-type :overuse :pct (pct overuse)})
@@ -567,45 +613,54 @@
                     :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
               (render-label seg narrow?)]))]
          
-         [:div {:class "budget-bar-segments"}
-          (when (pos? spent)
-            (let [spent-flex (pct spent)]
-              [:div {:style {:display "flex" :flex (str spent-flex)}}
-               (doall
-                (for [[idx c] (map-indexed vector cat-segments)
-                      :when (pos? (:spent c))]
-                  ^{:key (str "cat-spent-" idx)}
-                  [:div {:style {:flex (:spent c)
-                                 :background-color (:color c)
-                                 :height "100%"}
-                         :title (str (:name c) " " (fmt/format-amount (:spent c)))}]))]))
-          
-          (when (pos? overuse)
-            (let [overuse-flex (pct overuse)]
-              [:div {:style {:display "flex" :flex (str overuse-flex) :position "relative"}}
-               (doall
-                (for [[idx c] (map-indexed vector cat-segments)
-                      :when (pos? (:overuse c))]
-                  ^{:key (str "cat-over-" idx)}
-                  [:div {:style {:flex (:overuse c)
-                                 :background-color (:color c)
-                                 :height "100%"
-                                 :position "relative"}}
-                   [:div {:style {:position "absolute"
-                                  :inset "0"
-                                  :background (str "repeating-linear-gradient(45deg, transparent, transparent 3px, "
-                                                   (:stripe-color c) " 3px, " (:stripe-color c) " 5px)")}}]]))]))
-          
+         ^{:key (str spent "|" overuse "|" uncategorized "|" remaining)}
+         [:div.budget-bar-segments
+          (doall
+           (for [c cat-segments
+                 :when (pos? (:spent c))]
+             ^{:key (str "spent-" (:id c) "-" (:spent c))}
+             [:div {:title (str (:name c) " " (fmt/format-amount (:spent c)))
+                    :style {:flex-grow (:spent c)
+                            :flex-shrink 1
+                            :flex-basis "0%"
+                            :min-width 0
+                            :height "100%"
+                            :background-color (:color c)}}]))
+          (doall
+           (for [c cat-segments
+                 :when (pos? (:overuse c))]
+             ^{:key (str "over-" (:id c) "-" (:overuse c))}
+             [:div {:title (str (:name c) " over " (fmt/format-amount (:overuse c)))
+                    :style {:flex-grow (:overuse c)
+                            :flex-shrink 1
+                            :flex-basis "0%"
+                            :min-width 0
+                            :height "100%"
+                            :position "relative"
+                            :overflow "hidden"
+                            :background-color (:color c)}}
+              [:div {:style {:position "absolute"
+                             :top 0 :right 0 :bottom 0 :left 0
+                             :background (str "repeating-linear-gradient(45deg, transparent, transparent 3px, "
+                                              (:stripe-color c) " 3px, " (:stripe-color c) " 5px)")}}]]))
           (when (pos? uncategorized)
-            [:div {:style {:flex (pct uncategorized)
-                           :background-color uncategorized-color
-                           :height "100%"}
-                   :title (str "Ukategorisert " (fmt/format-amount uncategorized))}])
-          
+            ^{:key (str "uncat-" uncategorized)}
+            [:div {:title (str "Ukategorisert " (fmt/format-amount uncategorized))
+                   :style {:flex-grow uncategorized
+                           :flex-shrink 1
+                           :flex-basis "0%"
+                           :min-width 0
+                           :height "100%"
+                           :background-color uncategorized-color}}])
           (when (pos? remaining)
-            [:div {:class "budget-bar-seg-remaining"
-                   :style {:flex (pct remaining) :height "100%"}
-                   :title (str "Gjenstår " (fmt/format-amount remaining))}])]
+            ^{:key (str "rem-" remaining)}
+            [:div.budget-bar-seg-remaining
+             {:title (str "Gjenstår " (fmt/format-amount remaining))
+              :style {:flex-grow remaining
+                      :flex-shrink 1
+                      :flex-basis "0%"
+                      :min-width 0
+                      :height "100%"}}])]
          
          (when (pos? below-row-count)
            (doall
@@ -687,8 +742,6 @@
           period     @(subscribe [:period])
           filter-path @(subscribe [:filter-path])
           selected-tag @(subscribe [:selected-tag])
-          balance-data @(subscribe [:balance])
-          balance (:available-balance balance-data)
           show-targets? @(subscribe [:treemap-show-targets?])
           show-filters? @(subscribe [:treemap-show-filters?])
           single-month? (= :month (:period-type period))
@@ -792,32 +845,7 @@
                               :color tag-bar-color
                               :white-space "nowrap"}}
                (fmt/format-amount tag-value)]]))
-         (when (and targets? (pos? target-sum))
-           (let [now (js/Date.)
-                 current-month? (and single-month?
-                                     (= (.getFullYear (:start period)) (.getFullYear now))
-                                     (= (.getMonth (:start period)) (.getMonth now)))
-                 budgeted (vec (filter #(pos? (or (parse-target (:target %)) 0)) visible))
-                 unbudgeted (vec (remove #(pos? (or (parse-target (:target %)) 0)) visible))
-                 spent (reduce + 0 (map (fn [c]
-                                          (min (Math/abs (:amount c))
-                                               (or (parse-target (:target c)) 0)))
-                                        budgeted))
-                 overuse (reduce + 0 (map (fn [c]
-                                            (max 0 (- (Math/abs (:amount c))
-                                                      (or (parse-target (:target c)) 0))))
-                                          budgeted))
-                 uncategorized (reduce + 0 (map #(Math/abs (:amount %)) unbudgeted))
-                 remaining (max 0 (- target-sum spent))]
-             ^{:key (str spent "-" overuse "-" uncategorized "-" remaining)}
-             [budget-summary-bar {:budgeted-categories budgeted
-                                  :spent spent
-                                  :overuse overuse
-                                  :uncategorized uncategorized
-                                  :remaining remaining
-                                  :balance balance
-                                  :current-month? current-month?
-                                  :target-sum target-sum}]))])))
+         [budget-summary-bar]])))
 
 (defn- unallocated-label-styles [min-dim]
   {:name {:color "var(--text-dim)"
