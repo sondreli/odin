@@ -451,38 +451,53 @@
         " igjen i budsjetterte kategorier"])]))
 
 (defn- budget-summary-bar
-  "Summary bar showing budget breakdown (Brukt / Overforbruk / Ukategorisert / Gjenstår)
-   with treemap-matching colors and an arithmetic expression for remaining balance.
-
-   Segments and their amounts are passed in directly so the caller controls
-   classification."
-  [{:keys [spent overuse uncategorized remaining balance current-month? target-sum]}]
-  (let [total (+ spent overuse uncategorized remaining)]
+  "Summary bar showing budget breakdown with treemap-matching colors.
+   
+   The 'Brukt' portion is built from individual category segments using their
+   treemap colors. Overuse uses diagonal stripes matching the treemap's over-budget
+   hatching. Uncategorized uses the same grey as the treemap. Gjenstår is a light
+   faded color with subtle border.
+   
+   Props:
+     :budgeted-categories - vector of categories with :color, :amount, :target
+     :spent, :overuse, :uncategorized, :remaining - amounts for each segment
+     :balance, :current-month?, :target-sum - for equation display"
+  [{:keys [budgeted-categories spent overuse uncategorized remaining balance current-month? target-sum]}]
+  (let [total (+ spent overuse uncategorized remaining)
+        uncategorized-color "#9ca3af"]
     (when (pos? total)
-      (let [pct       (fn [v] (* 100 (/ v total)))
-            segments  (cond-> [{:label "Brukt"        :amount spent
-                                :seg-type :spent
-                                :pct (pct spent)}]
-                        (pos? overuse)
-                        (conj {:label "Overforbruk"   :amount overuse
-                               :seg-type :overuse
-                               :pct (pct overuse)})
-
-                        (pos? uncategorized)
-                        (conj {:label "Ukategorisert" :amount uncategorized
-                               :seg-type :uncategorized
-                               :pct (pct uncategorized)})
-
-                        (pos? remaining)
-                        (conj {:label "Gjenstår"      :amount remaining
-                               :seg-type :remaining
-                               :pct (pct remaining)}))
+      (let [pct (fn [v] (* 100 (/ v total)))
+            
+            cat-segments
+            (->> budgeted-categories
+                 (filter #(pos? (Math/abs (:amount %))))
+                 (sort-by #(Math/abs (:amount %)) >)
+                 (mapv (fn [c]
+                         (let [cat-spent (min (Math/abs (:amount c))
+                                              (or (parse-target (:target c)) 0))
+                               cat-over (max 0 (- (Math/abs (:amount c))
+                                                  (or (parse-target (:target c)) 0)))
+                               base-color (or (:color c) "#9ca3af")]
+                           {:name (:name c)
+                            :spent cat-spent
+                            :overuse cat-over
+                            :color base-color
+                            :stripe-color (darken-color base-color 0.6)}))))
+            
+            total-cat-spent (reduce + 0 (map :spent cat-segments))
+            total-cat-over (reduce + 0 (map :overuse cat-segments))
+            
+            segments (cond-> [{:label "Brukt" :amount spent :seg-type :spent :pct (pct spent)}]
+                       (pos? overuse)
+                       (conj {:label "Overforbruk" :amount overuse :seg-type :overuse :pct (pct overuse)})
+                       (pos? uncategorized)
+                       (conj {:label "Ukategorisert" :amount uncategorized :seg-type :uncategorized :pct (pct uncategorized)})
+                       (pos? remaining)
+                       (conj {:label "Gjenstår" :amount remaining :seg-type :remaining :pct (pct remaining)}))
+            
             text-est-pct 18
             placements
-            (loop [i 0
-                   cum 0
-                   prev-text-right 0
-                   result []]
+            (loop [i 0 cum 0 prev-text-right 0 result []]
               (if (>= i (count segments))
                 result
                 (let [seg (nth segments i)
@@ -492,45 +507,28 @@
                       text-left (max 0 (- bar-right text-est-pct))
                       overlaps-prev? (and (pos? i) (< text-left prev-text-right))
                       text-below? overlaps-prev?
-                      my-text-right (cond
-                                      text-below?      prev-text-right
-                                      :else            (min 100 (max bar-right text-est-pct)))]
-                  (recur (inc i)
-                         bar-right
-                         my-text-right
-                         (conj result {:left-pct cum
-                                       :bar-pct bar-pct
-                                       :right-pct right-pct
-                                       :text-below? text-below?})))))
+                      my-text-right (if text-below? prev-text-right (min 100 (max bar-right text-est-pct)))]
+                  (recur (inc i) bar-right my-text-right
+                         (conj result {:left-pct cum :bar-pct bar-pct :right-pct right-pct :text-below? text-below?})))))
+            
             below-placements
             (loop [i 0 rows [] result []]
               (if (>= i (count segments))
                 result
-                (let [seg (nth segments i)
-                      p (nth placements i)]
+                (let [p (nth placements i)]
                   (if (not (:text-below? p))
                     (recur (inc i) rows (conj result nil))
                     (let [bar-right (+ (:left-pct p) (:bar-pct p))
                           text-left (max 0 (- bar-right text-est-pct))
                           row-idx (loop [r 0]
-                                    (if (>= r (count rows))
-                                      r
-                                      (if (< text-left (nth rows r))
-                                        (recur (inc r))
-                                        r)))
+                                    (if (>= r (count rows)) r
+                                        (if (< text-left (nth rows r)) (recur (inc r)) r)))
                           new-right (min 100 (max bar-right text-est-pct))
-                          rows (if (>= row-idx (count rows))
-                                 (conj rows new-right)
-                                 (assoc rows row-idx new-right))]
+                          rows (if (>= row-idx (count rows)) (conj rows new-right) (assoc rows row-idx new-right))]
                       (recur (inc i) rows (conj result row-idx)))))))
+            
             below-row-count (count (distinct (filter some? below-placements)))
-            seg-class (fn [seg-type]
-                        (case seg-type
-                          :spent "budget-bar-seg-spent"
-                          :overuse "budget-bar-seg-overuse"
-                          :uncategorized "budget-bar-seg-uncategorized"
-                          :remaining "budget-bar-seg-remaining"
-                          ""))
+            
             label-class (fn [seg-type]
                           (case seg-type
                             :spent "budget-label-spent"
@@ -538,6 +536,7 @@
                             :uncategorized "budget-label-uncategorized"
                             :remaining "budget-label-remaining"
                             ""))
+            
             render-label (fn [seg narrow?]
                            (let [lbl (:label seg)
                                  amt (fmt/format-amount (:amount seg))]
@@ -547,13 +546,13 @@
                                 [:<>
                                  [:span {:class "budget-label-name"} lbl]
                                  [:span {:class "budget-label-amount"} amt]])]))]
+        
         [:div {:class "budget-bar-container"}
-         ;; Summary line above
          [budget-summary-line {:spent (+ spent overuse)
                                :target-sum target-sum
                                :overuse overuse
                                :remaining remaining}]
-         ;; Above-bar labels
+         
          [:div {:class "budget-bar-labels-above"}
           (doall
            (for [[i seg] (map-indexed vector segments)
@@ -567,16 +566,47 @@
                             :padding-right "4px"}
                     :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
               (render-label seg narrow?)]))]
-         ;; Continuous segmented bar
+         
          [:div {:class "budget-bar-segments"}
-          (doall
-           (for [[i seg] (map-indexed vector segments)
-                 :let [p (nth placements i)]]
-             ^{:key (str "bar-" i)}
-             [:div {:class (str "budget-bar-seg " (seg-class (:seg-type seg)))
-                    :style {:flex (:pct seg)}
-                    :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}]))]
-         ;; Below-bar label rows (one per row that was needed)
+          (when (pos? spent)
+            (let [spent-flex (pct spent)]
+              [:div {:style {:display "flex" :flex (str spent-flex)}}
+               (doall
+                (for [[idx c] (map-indexed vector cat-segments)
+                      :when (pos? (:spent c))]
+                  ^{:key (str "cat-spent-" idx)}
+                  [:div {:style {:flex (:spent c)
+                                 :background-color (:color c)
+                                 :height "100%"}
+                         :title (str (:name c) " " (fmt/format-amount (:spent c)))}]))]))
+          
+          (when (pos? overuse)
+            (let [overuse-flex (pct overuse)]
+              [:div {:style {:display "flex" :flex (str overuse-flex) :position "relative"}}
+               (doall
+                (for [[idx c] (map-indexed vector cat-segments)
+                      :when (pos? (:overuse c))]
+                  ^{:key (str "cat-over-" idx)}
+                  [:div {:style {:flex (:overuse c)
+                                 :background-color (:color c)
+                                 :height "100%"
+                                 :position "relative"}}
+                   [:div {:style {:position "absolute"
+                                  :inset "0"
+                                  :background (str "repeating-linear-gradient(45deg, transparent, transparent 3px, "
+                                                   (:stripe-color c) " 3px, " (:stripe-color c) " 5px)")}}]]))]))
+          
+          (when (pos? uncategorized)
+            [:div {:style {:flex (pct uncategorized)
+                           :background-color uncategorized-color
+                           :height "100%"}
+                   :title (str "Ukategorisert " (fmt/format-amount uncategorized))}])
+          
+          (when (pos? remaining)
+            [:div {:class "budget-bar-seg-remaining"
+                   :style {:flex (pct remaining) :height "100%"}
+                   :title (str "Gjenstår " (fmt/format-amount remaining))}])]
+         
          (when (pos? below-row-count)
            (doall
             (for [row (range below-row-count)]
@@ -596,7 +626,7 @@
                                  :padding-right "4px"}
                          :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
                    (render-label seg narrow?)]))])))
-         ;; Arithmetic expression for current month: Saldo X − gjenstår Y = Z ledig
+         
          (when current-month?
            (let [diff (when balance (- balance remaining))]
              [:div {:class "budget-bar-equation"}
@@ -779,7 +809,8 @@
                                           budgeted))
                  uncategorized (reduce + 0 (map #(Math/abs (:amount %)) unbudgeted))
                  remaining (max 0 (- target-sum spent))]
-             [budget-summary-bar {:spent spent
+             [budget-summary-bar {:budgeted-categories budgeted
+                                  :spent spent
                                   :overuse overuse
                                   :uncategorized uncategorized
                                   :remaining remaining
