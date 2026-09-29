@@ -4,7 +4,8 @@
             [goog.string :as gstring]
             [goog.string.format]
             [common.category-service :as category]
-            [client.components.treemap-component.layout :as layout]))
+            [client.components.treemap-component.layout :as layout]
+            [client.services.format-service :as fmt]))
 
 (def ^:private parse-target layout/parse-target)
 (def ^:private darken-color layout/darken-color)
@@ -112,23 +113,22 @@
         under-color (lighten-color base-color 0.5)
         styles (label-styles min-dim)]
     ^{:key id}
-    [:div {:style (merge {:position         "absolute"
-                          :left             (str ix "px")
-                          :top              (str iy "px")
-                          :width            (str iw "px")
-                          :height           (str ih "px")
-                          :box-sizing       "border-box"
-                          :overflow         "hidden"
-                          :cursor           "pointer"
-                          :transition       "opacity 0.15s ease"
-                          :opacity          opacity}
-                         {:border "1px solid rgba(255,255,255,0.5)"})
+    [:div {:style {:position         "absolute"
+                   :left             (str (+ ix 1) "px")
+                   :top              (str (+ iy 1) "px"):width            (str (max 0 (- iw 2)) "px")
+                   :height           (str (max 0 (- ih 2)) "px")
+                   :box-sizing       "border-box"
+                   :overflow         "hidden"
+                   :border-radius    "8px"
+                   :cursor           "pointer"
+                   :transition       "opacity 0.15s ease"
+                   :opacity          opacity}
            :on-mouse-enter #(reset! hovered-id id)
            :on-mouse-leave #(reset! hovered-id nil)
            :on-click #(dispatch [:view-category name])
            :title (str name " — " (when pct (gstring/format "%.1f%%" pct))
-                       " (" (gstring/format "%.0f" value) ")"
-                       (when cat-target (str " target: " (gstring/format "%.0f" cat-target))))}
+                       " (" (fmt/format-amount value) ")"
+                       (when cat-target (str " target: " (fmt/format-amount cat-target))))}
      (if show-split?
        (let [normal-pct (str (* 100 normal-ratio) "%")
              accent-pct (str (* 100 (- 1 normal-ratio)) "%")]
@@ -226,7 +226,7 @@
                        #(if is-selected?
                           (dispatch [:navigate [nil nil []]])
                           (dispatch [:navigate [nil nil [parent-name name]]])))
-           :title (str name " — " (gstring/format "%.0f" value)
+           :title (str name " — " (fmt/format-amount value)
                        (when pct (str " (" (gstring/format "%.1f%%" pct) ")")))}
      [:<>
       [:div {:style {:background-color color
@@ -516,7 +516,7 @@
                            [:span
                             [:span {:style {:color "#888" :margin-right "4px"}} (:label seg)]
                             [:span {:style {:font-weight "600" :color (:text-color seg)}}
-                             (gstring/format "%.0f" (:amount seg))]])]
+                             (fmt/format-amount (:amount seg))]])]
         [:div {:style {:margin-top "12px"}}
          ;; Above-bar labels: one row, right-anchored to each segment that fits there
          [:div {:style {:position "relative" :height "18px" :margin-bottom "2px"}}
@@ -567,40 +567,16 @@
                             :color (if balance "#333" "#999")}}
               (if balance
                 [:span
-                 [:span (gstring/format "%.0f" balance)]
+                 [:span (fmt/format-amount balance)]
                  [:span {:style {:margin "0 6px" :color "#888"}} "−"]
-                 [:span (gstring/format "%.0f" remaining)]
+                 [:span (fmt/format-amount remaining)]
                  [:span {:style {:margin "0 6px" :color "#888"}} "="]
                  [:span {:style {:font-weight "600"
                                  :color (cond (nil? diff) "#999"
                                               (neg? diff)  "#ef4444"
                                               :else         "#34d399")}}
-                  (gstring/format "%.0f" diff)]]
-                (str "— − " (gstring/format "%.0f" remaining) " = —"))]))]))))
-
-(defn- filter-path-bar
-  "Horizontal bar showing the value of the current filter-path selection,
-   starting from the left with the category color."
-  [filter-value total-spending cat-color]
-  (let [bar-pct (when (and (pos? filter-value) (pos? total-spending))
-                  (min 100 (* 100 (/ filter-value total-spending))))]
-    (when bar-pct
-      [:div {:style {:position "relative" :height "22px" :margin-top "2px"}}
-       [:div {:style {:position "absolute"
-                      :left "0"
-                      :width (str bar-pct "%")
-                      :top "0"
-                      :height "4px"
-                      :background-color cat-color
-                      :border-radius "2px"}}]
-       [:span {:style {:position "absolute"
-                       :left "0"
-                       :top "6px"
-                       :font-size "12px"
-                       :font-weight "600"
-                       :color cat-color
-                       :white-space "nowrap"}}
-        (gstring/format "%.0f" filter-value)]])))
+                  (fmt/format-amount diff)]]
+                (str "— − " (fmt/format-amount remaining) " = —"))]))]))))
 
 (defn- diff-bar
   "Horizontal bar spanning between target-pct and spending-pct.
@@ -625,30 +601,30 @@
                      :font-weight "600"
                      :color bar-color
                      :white-space "nowrap"}}
-      (str (if over? "+" "-") (gstring/format "%.0f" (Math/abs diff-value)))]]))
+      (str (if over? "+" "-") (fmt/format-amount (Math/abs diff-value)))]]))
 
 (defn category-treemap
   "Subscribes to :summed-categories. Renders a treemap at full width.
-   Target arrow above and spending arrow below mark their positions.
-   Checkboxes toggle target sub-rectangles and filter sub-treemaps on/off.
+   `Vis budsjett` / `Vis filtre` are now controlled by re-frame state
+   (:treemap-show-targets? / :treemap-show-filters?), driven from the metrics-bar.
 
    Props:
      :height-ratio – optional (default 0.5)"
   []
-  (let [show-targets? (r/atom false)
-        show-filters? (r/atom false)]
-    (fn [{:keys [height-ratio] :or {height-ratio 0.5}}]
-      (let [categories @(subscribe [:summed-categories])
-            full-categories @(subscribe [:categories])
-            period-txns @(subscribe [:period-transactions])
-            period     @(subscribe [:period])
-            filter-path @(subscribe [:filter-path])
-            selected-tag @(subscribe [:selected-tag])
-            balance-data @(subscribe [:balance])
-            balance (:available-balance balance-data)
-            single-month? (= :month (:period-type period))
-            targets?   (and single-month? @show-targets?)
-            filters?   @show-filters?
+  (fn [{:keys [height-ratio] :or {height-ratio 0.5}}]
+    (let [categories @(subscribe [:summed-categories])
+          full-categories @(subscribe [:categories])
+          period-txns @(subscribe [:period-transactions])
+          period     @(subscribe [:period])
+          filter-path @(subscribe [:filter-path])
+          selected-tag @(subscribe [:selected-tag])
+          balance-data @(subscribe [:balance])
+          balance (:available-balance balance-data)
+          show-targets? @(subscribe [:treemap-show-targets?])
+          show-filters? @(subscribe [:treemap-show-filters?])
+          single-month? (= :month (:period-type period))
+          targets?   (and single-month? show-targets?)
+          filters?   show-filters?
             visible    (->> categories
                             (remove #(layout/excluded-ids (:id %)))
                             (filter #(or (neg? (:amount %))
@@ -693,30 +669,7 @@
                                        (map #(Math/abs (:amount %))
                                             (filter #(some #{tag-id} (:tag-ids %)) period-txns)))))
             tag-bar-color  (when selected-tag (:color selected-tag))]
-        [:div
-         [:div {:style {:display "flex" :align-items "center" :gap "12px"
-                        :margin-bottom "6px"}}
-          (when single-month?
-            [:label {:style {:display "flex" :align-items "center" :gap "4px"
-                             :font-size "13px" :color "#555" :cursor "pointer"
-                             :user-select "none"}}
-             [:input {:type "checkbox"
-                      :checked targets?
-                      :on-change #(swap! show-targets? not)
-                      :style {:cursor "pointer"}}]
-             "Vis budsjett"])
-          [:label {:style {:display "flex" :align-items "center" :gap "4px"
-                           :font-size "13px" :color "#555" :cursor "pointer"
-                           :user-select "none"}}
-           [:input {:type "checkbox"
-                    :checked filters?
-                    :on-change #(swap! show-filters? not)
-                    :style {:cursor "pointer"}}]
-           "Vis filtre"]
-          [:span {:style {:margin-left "auto" :font-size "13px" :color "#888"}}
-           "Konto: "
-           [:span {:style {:font-weight "600" :color "#555"}}
-            (if balance (gstring/format "%.0f kr" balance) "—")]]]
+        [:div.treemap-wrap
          (when (or targets? filters? selected-tag)
            [:div {:style {:display "flex" :flex-wrap "wrap" :align-items "center" :gap "12px"
                           :margin-bottom "4px" :font-size "11px" :color "#888"}}
@@ -747,7 +700,7 @@
          (when targets?
            [:div {:style {:position "relative" :height "28px" :margin-bottom "2px"}}
             (when target-pct
-              [treemap-arrow-above target-pct (gstring/format "%.0f" target-sum)])])
+              [treemap-arrow-above target-pct (fmt/format-amount target-sum)])])
          [treemap {:categories           categories
                    :pct-base             pct-base
                    :show-targets?        targets?
@@ -758,9 +711,7 @@
                    :height-ratio         height-ratio}]
          [:div {:style {:position "relative" :height "28px" :margin-top "2px"}}
           (when (and spending-pct (pos? total-spending))
-            [treemap-arrow-below spending-pct (gstring/format "%.0f" total-spending)])]
-         (when (and fp-value (pos? fp-value) (pos? total-spending))
-           [filter-path-bar fp-value total-spending fp-color])
+            [treemap-arrow-below spending-pct (fmt/format-amount total-spending)])]
          (when (and tag-value (pos? tag-value) (pos? total-spending))
            (let [bar-pct (min 100 (* 100 (/ tag-value total-spending)))]
              [:div {:style {:position "relative" :height "22px" :margin-top "2px"}}
@@ -778,7 +729,7 @@
                               :font-weight "600"
                               :color tag-bar-color
                               :white-space "nowrap"}}
-               (gstring/format "%.0f" tag-value)]]))
+               (fmt/format-amount tag-value)]]))
          (when (and targets? target-pct spending-pct)
            [diff-bar target-pct spending-pct diff-value])
          (when (and targets? (pos? target-sum))
@@ -803,4 +754,163 @@
                                   :uncategorized uncategorized
                                   :remaining remaining
                                   :balance balance
-                                  :current-month? current-month?}]))]))))
+                                  :current-month? current-month?}]))
+         [:div.treemap-foot
+          [:span.spent
+           (str "▲ " (fmt/format-kr total-spending) " brukt")]
+          (when (and targets? (pos? target-sum))
+            [:span.budget
+             (str " / " (fmt/format-kr target-sum) " budsjett")])]])))
+
+(defn- unallocated-label-styles [min-dim]
+  {:name {:color "var(--text-dim)"
+          :font-size (cond (> min-dim 80) "14px"
+                           (> min-dim 50) "12px"
+                           :else "10px")
+          :font-weight "600"
+          :line-height "1.3"
+          :text-align "center"
+          :padding "0 4px"
+          :max-width "100%"
+          :overflow "hidden"
+          :text-overflow "ellipsis"
+          :white-space "nowrap"}
+   :pct  {:color "var(--text-faint)"
+          :font-size (if (> min-dim 80) "12px" "10px")
+          :text-align "center"}})
+
+(defn- target-treemap-rect
+  [{:keys [id name color value unallocated?]} rect pct-base hovered-id selected-id]
+  (let [{ix :x iy :y iw :w ih :h} rect
+        pct     (when (and pct-base (pos? pct-base))
+                  (* 100 (/ value pct-base)))
+        min-dim (min iw ih)
+        hv      @hovered-id
+        is-hovered? (= hv id)
+        is-selected? (and selected-id (= (str id) (str selected-id)))
+        highlight-id (or selected-id hv)
+        is-highlighted? (if selected-id is-selected? is-hovered?)
+        opacity (if (some? highlight-id) (if is-highlighted? 1 0.45) 1)
+        styles (if unallocated? (unallocated-label-styles min-dim) (label-styles min-dim))]
+    ^{:key id}
+    [:div {:class (when unallocated? "target-treemap-unallocated")
+           :style {:position         "absolute"
+                   :left             (str (+ ix 1) "px")
+                   :top              (str (+ iy 1) "px")
+                   :width            (str (max 0 (- iw 2)) "px")
+                   :height           (str (max 0 (- ih 2)) "px")
+                   :box-sizing       "border-box"
+                   :overflow         "hidden"
+                   :border-radius    "8px"
+                   :cursor           (if unallocated? "default" "pointer")
+                   :transition       "left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease, opacity 0.15s ease"
+                   :opacity          opacity
+                   :background-color (when-not unallocated? (or color "#9ca3af"))}
+           :on-mouse-enter #(reset! hovered-id id)
+           :on-mouse-leave #(reset! hovered-id nil)
+           :on-click (when-not unallocated?
+                       #(dispatch [:edit-category3 (str id) 0]))
+           :title (str name " — " (when pct (gstring/format "%.1f%%" pct))
+                       " (" (fmt/format-amount value) ")") }
+     [:div {:style {:position "absolute" :inset "0"
+                    :display "flex" :flex-direction "column"
+                    :align-items "center" :justify-content "center"
+                    :pointer-events "none"
+                    :overflow "hidden"}}
+      (when (> min-dim 20)
+        [:span {:style (:name styles)} name])
+      (when (and pct (> min-dim 40))
+        [:span {:style (:pct styles)}
+         (gstring/format "%.1f%%" pct)])]]))
+
+(defn- budget-expense-cats [categories]
+  (->> categories
+       (filter :name)
+       (remove #(layout/excluded-ids (:id %)))
+       (remove #(pos? (or (:amount %) 0)))))
+
+(defn target-treemap
+  "Treemap of category targets on the budget page.
+
+   Cells are sized by each category's monthly target. An optional frontend-only
+   `:treemap-target` (totalTarget) is the visualization envelope: leftover
+   budget appears as an 'Ufordelt' cell. Editing a target updates the map live.
+
+   Props:
+     :height-ratio – height = width × ratio (default 0.32)"
+  []
+  (let [width-atom (r/atom nil)
+        obs-atom   (r/atom nil)
+        hovered-id (r/atom nil)
+        bind-ref!  (fn [el]
+                     (when-let [old @obs-atom]
+                       (.disconnect old)
+                       (reset! obs-atom nil))
+                     (when el
+                       (let [obs (js/ResizeObserver.
+                                  (fn [entries]
+                                    (when-let [e (aget entries 0)]
+                                      (reset! width-atom (.-width (.-contentRect e))))))]
+                         (.observe obs el)
+                         (reset! obs-atom obs))))]
+    (fn [{:keys [height-ratio] :or {height-ratio 0.32}}]
+      (let [categories    @(subscribe [:summed-categories])
+            total-target  @(subscribe [:treemap-target])
+            builder       @(subscribe [:builder-category])
+            selected-id   (:id builder)
+            expense-cats  (budget-expense-cats categories)
+            items         (layout/build-target-items expense-cats total-target)
+            allocated-sum (reduce + 0 (map :value (remove :unallocated? items)))
+            envelope      (parse-target total-target)
+            remainder     (or (some :value (filter :unallocated? items)) 0)
+            over          (when envelope (max 0 (- allocated-sum envelope)))
+            pct-base      (reduce + 0 (map :value items))
+            cw            @width-atom
+            ch            (when cw (* cw height-ratio))
+            va            (when (and cw ch (pos? pct-base)) (* cw ch))
+            laid-out      (when (and va (seq items))
+                            (layout/squarify
+                             (mapv (fn [c] (assoc c :area (* va (/ (:value c) pct-base))))
+                                   items)
+                             {:x 0 :y 0 :w cw :h ch}))
+            rects         (when laid-out
+                            (doall
+                             (for [item laid-out]
+                               ^{:key (:id item)}
+                               [target-treemap-rect item (:rect item) pct-base
+                                hovered-id selected-id])))]
+        [:div.target-treemap-card
+         [:div.target-treemap-toolbar
+          [:span.target-treemap-title "Målførdeling"]
+          [:label.target-treemap-total
+           [:span.dim "Totalt mål"]
+           [:input.be-input.a-right
+            {:type "text"
+             :value (or total-target "")
+             :placeholder "—"
+             :on-change #(dispatch [:set-treemap-target (-> % .-target .-value)])}]
+           [:span.dim "kr"]]
+          [:div.target-treemap-meta
+           [:span
+            "Tildelt "
+            [:span {:style {:font-weight "600" :color "var(--text)"}}
+             (fmt/format-amount allocated-sum)]
+            (when envelope
+              [:span.dim (str " / " (fmt/format-amount envelope))])]
+           (cond
+             (and envelope (pos? remainder))
+             [:span.dim (str (fmt/format-amount remainder) " ufordelt")]
+             (and envelope (pos? over))
+             [:span.neg (str (fmt/format-amount over) " over totalt mål")])]]
+         [:div {:ref bind-ref!
+                :style {:width        "100%"
+                        :aspect-ratio (when (seq items) (/ 1 height-ratio))
+                        :height       (when (and (seq items) ch) (str ch "px"))
+                        :min-height   (when (empty? items) "72px")
+                        :position     "relative"
+                        :overflow     "hidden"
+                        :box-sizing   "border-box"}}
+          (if (seq items)
+            rects
+            [:div.target-treemap-empty
+             "Sett et totalt mål, eller gi kategoriene et mål, for å se fordelingen."])]]))))

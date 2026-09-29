@@ -121,7 +121,50 @@
                          [:marked-by-filter?    :MarkedByFilter      :BOOL false identity]
                          [:source               :Source              :S    false identity]
                          [:tag-ids              :TagIds              :S    false identity]
-                         [:filter-tag-ids       :FilterTagIds        :S    false identity]])
+                         [:filter-tag-ids       :FilterTagIds        :S    false identity]
+                         [:account-id           :AccountId           :S    false identity]])
+
+;; Investment transactions (stock buys/sells imported from a broker CSV).
+;; Same composite-sortkey pattern as transactions: Timestamp = "unixtime#dateindex".
+(def investment-config [[:user-id       :UserId        :S    true  identity]
+                        [:date          :Timestamp     :S    true  +]
+                        [:account-id    :AccountId     :S    false identity]
+                        [:type          :Type          :S    false identity]
+                        [:isin          :Isin          :S    false identity]
+                        [:security-name :SecurityName  :S    false identity]
+                        [:quantity       :Quantity       :N    false identity]
+                        [:total-quantity :TotalQuantity  :N    false identity]
+                        [:price          :Price          :N    false identity]
+                        [:amount-nok     :AmountNok      :N    false identity]
+                        [:fx-rate        :FxRate         :N    false identity]
+                        [:source-id      :SourceId       :S    false identity]
+                        ;; Running account balance (Saldo). Used by credit-account rows
+                        ;; (type "credit") to carry the kredittkonto leverage balance.
+                        [:balance        :Balance        :N    false identity]])
+
+;; Grocery receipt line items (from Trumf / Rema / Coop loyalty apps).
+(def grocery-config [[:user-id    :UserId    :S true  identity]
+                     [:date       :Timestamp :S true  +]
+                     [:account-id :AccountId :S false identity]
+                     [:name       :Name      :S false identity]
+                     [:amount     :Amount    :N false identity]
+                     [:ean        :Ean       :S false identity]
+                     [:quantity   :Quantity  :N false identity]
+                     [:store      :Store     :S false identity]
+                     [:provider   :Provider  :S false identity]
+                     [:receipt-id :ReceiptId :S false identity]
+                     [:source-id  :SourceId  :S false identity]])
+
+;; Cached daily security prices (split-adjusted, already converted to NOK).
+;; Note: uses :price-date (not :date) to avoid the composite-sortkey special-case.
+(def security-price-config [[:isin       :Isin      :S true  identity]
+                            [:price-date :Date      :S true  identity]
+                            [:price-nok  :PriceNok  :N false identity]])
+
+;; Per-user, per-ISIN manual settings (currently the Nordnet collateral ratio / belåningsgrad).
+(def security-setting-config [[:user-id          :UserId          :S true  identity]
+                              [:isin             :Isin            :S true  identity]
+                              [:pawn-percentage  :PawnPercentage  :N false identity]])
 
 (def category-config [[:user-id     :UserId     :S]
                       [:id          :Id         :S]
@@ -174,6 +217,10 @@
 (def user-table-name "User")
 (def account-table-name "Account")
 (def loan-table-name "Loan")
+(def investment-table-name "InvestmentTransaction")
+(def grocery-table-name "GroceryItem")
+(def security-price-table-name "SecurityPrice")
+(def security-setting-table-name "SecuritySetting")
 
 ;;
 ;;  Write to database
@@ -187,27 +234,51 @@
                                 (.build))]
     (.putItem ^DynamoDbClient @dynamodb-client req)))
 
-(defn write-batch-items
-  [table-name items]
-  (let [write-requests (mapv (fn [item]
-                               (let [^PutRequest pr (-> (PutRequest/builder)
-                                                        (.item (clj-item->sdk-item item))
-                                                        (.build))]
-                                 (-> (WriteRequest/builder)
-                                     (.putRequest pr)
-                                     (.build))))
-                             items)
-        ^BatchWriteItemRequest request (-> (BatchWriteItemRequest/builder)
-                                         (.requestItems {table-name write-requests})
+(defn items->write-requests
+  [items]
+  (mapv (fn [item]
+          (let [^PutRequest pr (-> (PutRequest/builder)
+                                   (.item (clj-item->sdk-item item))
+                                   (.build))]
+            (-> (WriteRequest/builder)
+                (.putRequest pr)
+                (.build))))
+        items))
+
+(defn batch-write-request-items
+  "Submit a request-items map (table-name -> list of WriteRequest) to DynamoDB
+  via a single BatchWriteItem call, returning the result."
+  [request-items]
+  (let [^BatchWriteItemRequest request (-> (BatchWriteItemRequest/builder)
+                                         (.requestItems request-items)
                                          (.build))]
     (.batchWriteItem ^DynamoDbClient @dynamodb-client request)))
 
-(defn write-items-to-db [table-name items]
+(def ^:private batch-write-max-retries 5)
+
+(defn write-items-to-db
+  "Write a single batch (<=25 items) to DynamoDB. BatchWriteItem can return
+  unprocessed items under throttling/load even when the call itself succeeds,
+  so re-submit those with exponential backoff rather than dropping them."
+  [table-name items]
   (try
-    (let [result (write-batch-items table-name items)]
-      (when (.hasUnprocessedItems result)
-        (println "Warning: Some items were not processed:" (.unprocessedItems result)))
-      result)
+    (loop [request-items {table-name (items->write-requests items)}
+           attempt       0]
+      (let [result      (batch-write-request-items request-items)
+            unprocessed (.unprocessedItems result)]
+        (if (or (nil? unprocessed) (.isEmpty unprocessed))
+          result
+          (if (< attempt batch-write-max-retries)
+            (let [backoff-ms (* 100 (long (Math/pow 2 attempt)))
+                  remaining  (reduce + (map count (vals unprocessed)))]
+              (println (format "BatchWriteItem returned %d unprocessed item(s); retrying (attempt %d/%d) after %dms"
+                               remaining (inc attempt) batch-write-max-retries backoff-ms))
+              (Thread/sleep backoff-ms)
+              (recur (into {} unprocessed) (inc attempt)))
+            (do
+              (println "Error: items still unprocessed after" batch-write-max-retries "retries:" unprocessed)
+              (throw (ex-info "BatchWriteItem failed: items remain unprocessed after retries"
+                              {:unprocessed-items unprocessed})))))))
     (catch DynamoDbException e
       (println "Error writing to DynamoDB:" (.getMessage e))
       (println "Problematic items:" items)
@@ -439,7 +510,7 @@
         db-transactions (query-items-greater-than2 table-name
                                            "UserId" user-id
                                            "Timestamp" (iso-date->sortkey iso-date)
-                                                   ["Timestamp" "Description" "Amount" "CategoryId" "MarkedByFilter" "TagIds" "FilterTagIds"]
+                                                   ["Timestamp" "Description" "Amount" "CategoryId" "MarkedByFilter" "TagIds" "FilterTagIds" "AccountId"]
                                                    retrieve-all?)
         _ (println "Retrieved" (count db-transactions) "db-transactions from DynamoDB")
         _ (println "db-transactions one: " (first db-transactions))
@@ -451,6 +522,95 @@
         _ (println "Sample Clojure transaction:" (first transactions))
         _ (println "=== END get-transactions-after ===")]
     transactions))
+
+;;
+;; Investment transactions
+;;
+
+(defn store-investment-transactions [investment-transactions]
+  (let [db-items (map #(item->db-item investment-config %) investment-transactions)]
+    (store-items investment-table-name db-items)
+    investment-transactions))
+
+(defn get-investment-transactions
+  "Return all investment transactions for a user, oldest first."
+  [user-id]
+  (->> (query-all-items investment-table-name "UserId" {:S user-id})
+       (sort-by #(-> % :Timestamp :S))
+       (map #(reduce translate-key-val % investment-config))
+       (map split-composite-sortkey-date)
+       (map #(assoc % :user-id user-id))))
+
+(defn get-investment-source-ids
+  "Return the set of Nordnet source-ids already stored for a user (for import dedupe)."
+  [user-id]
+  (->> (get-investment-transactions user-id)
+       (keep :source-id)
+       set))
+
+;;
+;; Grocery items (receipt lines from loyalty apps)
+;;
+
+(defn store-grocery-items [items]
+  (let [db-items (map #(item->db-item grocery-config %) items)]
+    (store-items grocery-table-name db-items)
+    items))
+
+(defn get-grocery-items
+  "Return all grocery line items for a user, oldest first."
+  [user-id]
+  (->> (query-all-items grocery-table-name "UserId" {:S user-id})
+       (sort-by #(-> % :Timestamp :S))
+       (map #(reduce translate-key-val % grocery-config))
+       (map split-composite-sortkey-date)
+       (map #(assoc % :user-id user-id))))
+
+;;
+;; Security prices
+;;
+
+(defn store-security-prices [prices]
+  (let [db-items (map #(item->db-item security-price-config %) prices)]
+    (store-items security-price-table-name db-items)
+    prices))
+
+(defn get-security-prices
+  "Return all cached daily prices for an ISIN as {:isin :price-date :price-nok}."
+  [isin]
+  (->> (query-all-items security-price-table-name "Isin" {:S isin})
+       (map #(reduce translate-key-val % security-price-config))))
+
+;;
+;; Security settings (per-user collateral ratio)
+;;
+
+;; Reserved Isin key (in SecuritySetting) used to stash per-user metadata, not a real ratio.
+(def prices-refreshed-isin "__prices_refreshed_at__")
+
+(defn put-security-setting [user-id isin pawn-percentage]
+  (write-item security-setting-table-name
+              (item->db-item security-setting-config
+                             {:user-id user-id :isin isin :pawn-percentage pawn-percentage})))
+
+(defn get-security-settings-raw [user-id]
+  (->> (query-all-items security-setting-table-name "UserId" {:S user-id})
+       (map #(reduce translate-key-val % security-setting-config))))
+
+(defn get-security-settings
+  "Per-ISIN collateral ratios for a user (excludes reserved `__`-prefixed metadata keys)."
+  [user-id]
+  (remove #(s/starts-with? (str (:isin %)) "__") (get-security-settings-raw user-id)))
+
+(defn set-prices-refreshed-at [user-id ms]
+  (put-security-setting user-id prices-refreshed-isin (double ms)))
+
+(defn get-prices-refreshed-at
+  "Epoch-ms of the user's last successful price refresh, or nil."
+  [user-id]
+  (some->> (get-security-settings-raw user-id)
+           (filter #(= prices-refreshed-isin (:isin %)))
+           first :pawn-percentage long))
 
 (defn translate-marker [category]
   (let [marker (-> category :marker edn/read-string)]
@@ -615,7 +775,7 @@
 
 (defn put-account [{:keys [user-id account-id provider account-name
                            client-id client-secret redirect-uri
-                           token-data bank-account-key created-at]}]
+                           token-data bank-account-key account-number last-sync created-at]}]
   (write-item account-table-name
               (cond-> {:UserId    {:S user-id}
                        :AccountId {:S account-id}
@@ -626,7 +786,9 @@
                 client-secret    (assoc :ClientSecret   {:S client-secret})
                 redirect-uri     (assoc :RedirectUri    {:S redirect-uri})
                 token-data       (assoc :TokenData      {:S token-data})
-                bank-account-key (assoc :BankAccountKey  {:S bank-account-key}))))
+                bank-account-key (assoc :BankAccountKey  {:S bank-account-key})
+                account-number   (assoc :AccountNumber  {:S account-number})
+                last-sync        (assoc :LastSync       {:S last-sync}))))
 
 (defn get-accounts-for-user [user-id]
   (let [request (-> (QueryRequest/builder)
@@ -647,7 +809,9 @@
               (get item :ClientSecret)   (assoc :client-secret   (get-in item [:ClientSecret :S]))
               (get item :RedirectUri)    (assoc :redirect-uri    (get-in item [:RedirectUri :S]))
               (get item :TokenData)      (assoc :token-data      (get-in item [:TokenData :S]))
-              (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S]))))
+              (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S]))
+              (get item :AccountNumber)  (assoc :account-number  (get-in item [:AccountNumber :S]))
+              (get item :LastSync)       (assoc :last-sync       (get-in item [:LastSync :S]))))
           items)))
 
 (defn get-account [user-id account-id]
@@ -668,7 +832,9 @@
           (get item :ClientSecret)   (assoc :client-secret   (get-in item [:ClientSecret :S]))
           (get item :RedirectUri)    (assoc :redirect-uri    (get-in item [:RedirectUri :S]))
           (get item :TokenData)      (assoc :token-data      (get-in item [:TokenData :S]))
-          (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S])))))))
+          (get item :BankAccountKey) (assoc :bank-account-key (get-in item [:BankAccountKey :S]))
+          (get item :AccountNumber)  (assoc :account-number  (get-in item [:AccountNumber :S]))
+          (get item :LastSync)       (assoc :last-sync       (get-in item [:LastSync :S])))))))
 
 (defn update-account-tokens [user-id account-id token-data-json]
   (let [req ^UpdateItemRequest (-> (UpdateItemRequest/builder)
@@ -697,6 +863,26 @@
                                           "AccountId" (str->attr account-id)})
                                    (.updateExpression "SET BankAccountKey = :bk")
                                    (.expressionAttributeValues {":bk" (str->attr bank-account-key)})
+                                   (.build))]
+    (.updateItem ^DynamoDbClient @dynamodb-client ^UpdateItemRequest req)))
+
+(defn update-account-number [user-id account-id account-number]
+  (let [req ^UpdateItemRequest (-> (UpdateItemRequest/builder)
+                                   (.tableName account-table-name)
+                                   (.key {"UserId"    (str->attr user-id)
+                                          "AccountId" (str->attr account-id)})
+                                   (.updateExpression "SET AccountNumber = :an")
+                                   (.expressionAttributeValues {":an" (str->attr account-number)})
+                                   (.build))]
+    (.updateItem ^DynamoDbClient @dynamodb-client ^UpdateItemRequest req)))
+
+(defn update-account-last-sync [user-id account-id last-sync]
+  (let [req ^UpdateItemRequest (-> (UpdateItemRequest/builder)
+                                   (.tableName account-table-name)
+                                   (.key {"UserId"    (str->attr user-id)
+                                          "AccountId" (str->attr account-id)})
+                                   (.updateExpression "SET LastSync = :ls")
+                                   (.expressionAttributeValues {":ls" (str->attr last-sync)})
                                    (.build))]
     (.updateItem ^DynamoDbClient @dynamodb-client ^UpdateItemRequest req)))
 
@@ -741,6 +927,7 @@
     (swap! counts assoc "Loan" (delete-all-items-for-user loan-table-name :UserId :Id user-id))
     (swap! counts assoc "Filter" (delete-all-items-for-user filter-table-name :UserId :Id user-id))
     (swap! counts assoc "Account" (delete-all-items-for-user account-table-name :UserId :AccountId user-id))
+    (swap! counts assoc "GroceryItem" (delete-all-items-for-user grocery-table-name :UserId :Timestamp user-id))
     (delete-item user-table-name {:UserId {:S user-id}})
     (swap! counts assoc "User" 1)
     @counts))

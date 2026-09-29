@@ -13,7 +13,8 @@
             [odin.services.loan-service :as loans]
             [odin.services.category-service :as category-svc]
             [cognitect.transit :as transit])
-  (:import [java.io ByteArrayOutputStream]))
+  (:import [java.io ByteArrayOutputStream]
+           [java.time Instant]))
 
 (defn- extend-loan-histories!
   "For each of the user's loans whose filters match anything in the supplied
@@ -187,8 +188,9 @@
 ;;         tx-result (db/store-transactions transactions)]
 ;;     transactions))
 
-(defn bank->internal-transaction [user-id new-transaction]
+(defn bank->internal-transaction [user-id account-id new-transaction]
   {:user-id user-id
+   :account-id account-id
    :amount (-> new-transaction :amount str Double/parseDouble)
    :date (:date new-transaction)
    :date-index 0
@@ -310,7 +312,7 @@
 ; merge (only if some db-transactions)
 ; store (new and updates)
 ; return 
-(defn get-transactions2 [user-id token account-key]
+(defn get-transactions2 [user-id account-id token account-key]
   (let [categories (category-svc/get-categories-with-filters user-id)
         first-date "2015-01-01"
         db-transactions (db2/get-transactions-after user-id first-date false)]
@@ -320,7 +322,7 @@
       (let [all-bank-transactions (retrieve-all-transactions-year-by-year token account-key)
             _ (println "Total retrieved from bank:" (count all-bank-transactions))
             processed-transactions (->> all-bank-transactions
-                                       (map (partial bank->internal-transaction user-id))
+                                       (map (partial bank->internal-transaction user-id account-id))
                                        (update-date-index-in-new-transactions [])
                                        (category/add-categories categories)
                                        (map replace-nil-description))
@@ -333,14 +335,14 @@
           last-update-date (last-update-date first-date db-transactions 14)
           latest-db-transactions (transactions-from db-transactions last-update-date)
           latest-bank-transactions (->> (retrieve-bank-transactions-from last-update-date token account-key)
-                                         (map (partial bank->internal-transaction user-id)))
+                                         (map (partial bank->internal-transaction user-id account-id)))
           ; date-index is added if match towards db-transaction is found, thus it is only added for updates
           ; new transactions will have the date-index added as a continium from last update
           ;; _ (println "latest-db-transactions: " (count latest-db-transactions))
           ;; _ (println "latest-bank-transactions: " (count latest-bank-transactions))
-          [replacements, new] (merge/process-transactions-from-bank latest-db-transactions latest-bank-transactions)
+          [replacements, new, orphans] (merge/process-transactions-from-bank latest-db-transactions latest-bank-transactions)
           updates-and-new (-> latest-db-transactions
-                              (remove-outdated-transactions (map :old replacements))
+                              (remove-outdated-transactions (concat (map :old replacements) orphans))
                               (update-date-index-in-new-transactions (concat (map :new replacements) new)))
           ; date will change for updates (transactions during weekend), how will that affect update-db-transactions? Will need to update date-indexs for updates as well
           ;; updated-db-transactions (update-db-transactions latest-db-transactions updates) ; should be removed; merge in updated versions based on date-indexs
@@ -350,12 +352,14 @@
                                            (category/add-categories categories)
                                            (map replace-nil-description))
           old (old-transactions db-transactions last-update-date)
-          _ (db2/delete-transactions (map :old replacements))
+          _ (db2/delete-transactions (concat (map :old replacements) orphans))
           _ (db2/store-transactions categorized-updates-and-new)
           all-transactions (concat old categorized-updates-and-new)
           all-transactions-no-source (map #(dissoc % :source) all-transactions)
           _ (extend-loan-histories! user-id categorized-updates-and-new)]
-          (println "Refresh result - old:" (count old) "updates:" (count replacements) "new:" (count new))
+          (when (seq orphans)
+            (println "Orphans removed (db transactions with no bank match):" (count orphans) orphans))
+          (println "Refresh result - old:" (count old) "updates:" (count replacements) "new:" (count new) "orphans-removed:" (count orphans))
       {:transactions all-transactions-no-source
        :new-count (count new)
        :updated-count (count replacements)})))
@@ -420,7 +424,7 @@
          body (json/read-str body_str :key-fn keyword)
          account_key (:key body)
          _ (println "account_key: " account_key)
-         all-transactions (get-transactions2 user-id tokens account_key)]
+         all-transactions (get-transactions2 user-id nil tokens account_key)]
      (pp/pprint (take 3 all-transactions)))))
 
 (defn write-transit [data]
@@ -469,34 +473,62 @@
           (account-svc/store-bank-account-key user-id account-id bank-key))
         bank-key))))
 
+(defn account-tokens-result
+  "Obtain valid bank tokens for `account`. Returns a map:
+     {:tokens t}                  on success
+     {:tokens nil :reauth true}   when the refresh token has expired and the user
+                                  must re-authenticate (PSD2 SCA — cannot be automated)
+     {:tokens nil}                on any other (transient) failure."
+  [user-id account]
+  (let [account-id (:account-id account)]
+    (try
+      {:tokens (auth/get-tokens-for-account
+                 (:client-id account)
+                 (:client-secret account)
+                 #(account-svc/get-account-tokens user-id account-id)
+                 #(account-svc/store-account-tokens user-id account-id %)
+                 account-id)}
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :token-expired (:type (ex-data e)))
+          (do (println "Bank refresh token expired for account" account-id "- re-auth required")
+              {:tokens nil :reauth true})
+          (do (println "Bank token refresh failed:" (.getMessage e))
+              {:tokens nil})))
+      (catch Exception e
+        (println "Bank token refresh failed:" (.getMessage e))
+        {:tokens nil}))))
+
 (defn transaction_handler [request]
   (try
     (let [user-id (:user-id request)
           user-accounts (db2/get-accounts-for-user user-id)
-          first-account (first user-accounts)
-          db-only-response (fn [] (transit-response {:transactions (get-db-only-transactions user-id)
-                                                     :new-count 0 :updated-count 0}))]
+          ;; Only OAuth/bank accounts can sync over an API; CSV-imported accounts (e.g. Nordnet) are skipped.
+          first-account (->> user-accounts
+                             (remove #(= :csv (:type (account-svc/get-provider (:provider %)))))
+                             first)
+          db-only-response (fn [extra]
+                             (transit-response (merge {:transactions (get-db-only-transactions user-id)
+                                                       :new-count 0 :updated-count 0}
+                                                      extra)))]
       (if-not first-account
-        (db-only-response)
+        (db-only-response nil)
         (let [account-id (:account-id first-account)
-              tokens (try
-                       (auth/get-tokens-for-account
-                         (:client-id first-account)
-                         (:client-secret first-account)
-                         #(account-svc/get-account-tokens user-id account-id)
-                         #(account-svc/store-account-tokens user-id account-id %))
-                       (catch Exception e
-                         (println "Bank token refresh failed, falling back to DB transactions:" (.getMessage e))
-                         nil))]
+              {:keys [tokens reauth]} (account-tokens-result user-id first-account)]
           (if (nil? tokens)
-            (db-only-response)
+            (db-only-response (when reauth {:reauth-required true :reauth-account-id account-id}))
             (let [account (db2/get-account user-id account-id)
                   account-key (resolve-bank-account-key user-id account-id tokens (:bank-account-key account))]
               (if (nil? account-key)
-                (db-only-response)
-                (let [result (get-transactions2 user-id tokens account-key)]
+                (db-only-response nil)
+                (let [result (get-transactions2 user-id account-id tokens account-key)]
                   (if result
-                    (transit-response result)
+                    (do
+                      (try
+                        (account-svc/store-account-last-sync
+                          user-id account-id (str (Instant/now)))
+                        (catch Exception e
+                          (println "store-account-last-sync failed:" (.getMessage e))))
+                      (transit-response result))
                     {:status 500
                      :headers {"Content-Type" "application/json"}
                      :body (json/write-str {:error "Failed to load transactions"})}))))))))
@@ -514,6 +546,20 @@
       (transit-response {:transactions transactions :new-count 0 :updated-count 0}))
     (catch Exception e
       (println "recent_transaction_handler error:" (.getMessage e))
+      {:status 500
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str {:error (str "Server error: " (.getMessage e))})})))
+
+(defn investment-transactions-handler
+  "Return the user's raw investment (Nordnet) transactions for listing on the
+   transactions page. The client maps them into the table's display shape."
+  [request]
+  (try
+    (let [user-id (:user-id request)
+          transactions (db2/get-investment-transactions user-id)]
+      (transit-response {:transactions transactions}))
+    (catch Exception e
+      (println "investment-transactions-handler error:" (.getMessage e))
       {:status 500
        :headers {"Content-Type" "application/json"}
        :body (json/write-str {:error (str "Server error: " (.getMessage e))})})))
@@ -556,31 +602,87 @@
 
           :else
           {:balance (:balance matched)
-           :available-balance (:availableBalance matched)})))))
+           :available-balance (:availableBalance matched)
+           :account-number (or (:accountNumber matched) (:formattedNumber matched))})))))
+
+(defn- with-tokens
+  "Best-effort: load + refresh tokens for an account. Returns the tokens map or nil."
+  [user-id account]
+  (try
+    (auth/get-tokens-for-account
+      (:client-id account)
+      (:client-secret account)
+      #(account-svc/get-account-tokens user-id (:account-id account))
+      #(account-svc/store-account-tokens user-id (:account-id account) %)
+      (:account-id account))
+    (catch Exception e
+      (println "with-tokens: bank token refresh failed:" (.getMessage e))
+      nil)))
+
+(defn- enrich-account-with-bank
+  "Decorate a stored account with live :balance + :account-number from the bank.
+   Persists :account-number if newly seen. On any failure, returns the input
+   account unchanged. Skips non-OAuth providers (CSV, grocery)."
+  [user-id account]
+  (let [has-cred? (account-svc/has-credentials? account)
+        base (-> account
+                 (dissoc :client-id :client-secret :redirect-uri :token-data)
+                 (assoc :has-credentials has-cred?))
+        ptype (:type (account-svc/get-provider (:provider account)))]
+    (if (not= :oauth ptype)
+      base
+      (if-let [tokens (with-tokens user-id account)]
+        (if-let [info (retrieve-balance tokens (:bank-account-key account))]
+          (let [new-num (:account-number info)]
+            (when (and new-num (not= new-num (:account-number account)))
+              (try (account-svc/store-account-number user-id (:account-id account) new-num)
+                   (catch Exception e
+                     (println "enrich-account-with-bank: store-account-number failed:"
+                              (.getMessage e)))))
+            (cond-> base
+              true                       (assoc :balance (or (:available-balance info)
+                                                             (:balance info)))
+              (:account-number info)     (assoc :account-number (:account-number info))))
+          base)
+        base))))
+
+(defn accounts-handler
+  "Return user accounts decorated with live :balance / :account-number from the bank
+   plus the stored :last-sync timestamp."
+  [request]
+  (try
+    (let [user-id (:user-id request)
+          accounts (db2/get-accounts-for-user user-id)
+          enriched (mapv #(enrich-account-with-bank user-id %) accounts)]
+      {:status 200
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str enriched)})
+    (catch Exception e
+      (println "accounts-handler error:" (.getMessage e))
+      {:status 500
+       :headers {"Content-Type" "application/json"}
+       :body (json/write-str {:error (.getMessage e)})})))
 
 (defn balance_handler [request]
   (try
     (let [user-id (:user-id request)
           user-accounts (db2/get-accounts-for-user user-id)
-          first-account (first user-accounts)]
+          ;; Only OAuth/bank accounts have a live balance; CSV/grocery accounts are skipped.
+          first-account (->> user-accounts
+                             (filter #(= :oauth (:type (account-svc/get-provider (:provider %)))))
+                             first)]
       (if-not first-account
         {:status 200
          :headers {"Content-Type" "application/json"}
          :body (json/write-str {:balance nil})}
         (let [account-id (:account-id first-account)
-              tokens (try
-                       (auth/get-tokens-for-account
-                         (:client-id first-account)
-                         (:client-secret first-account)
-                         #(account-svc/get-account-tokens user-id account-id)
-                         #(account-svc/store-account-tokens user-id account-id %))
-                       (catch Exception e
-                         (println "Balance: bank token refresh failed:" (.getMessage e))
-                         nil))]
+              {:keys [tokens reauth]} (account-tokens-result user-id first-account)]
           (if (nil? tokens)
             {:status 200
              :headers {"Content-Type" "application/json"}
-             :body (json/write-str {:balance nil})}
+             :body (json/write-str (cond-> {:balance nil}
+                                     reauth (assoc :reauth-required true
+                                                   :reauth-account-id account-id)))}
             (let [balance (retrieve-balance tokens (:bank-account-key first-account))]
               {:status 200
                :headers {"Content-Type" "application/json"}

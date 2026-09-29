@@ -1,17 +1,31 @@
 (ns odin.services.transaction-service-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [odin.services.transaction-service :as ts]
+            [odin.services.category-service :as category-svc]
             [odin.db2 :as db2]
             [odin.services.date-service :as date]
-            [cognitect.aws.client.api :as aws]
-            [clojure.java.shell :refer [sh]]))
+            [clojure.java.shell :refer [sh]])
+  (:import [software.amazon.awssdk.services.dynamodb DynamoDbClient]
+           [software.amazon.awssdk.services.dynamodb.model
+            CreateTableRequest KeySchemaElement KeyType
+            AttributeDefinition ScalarAttributeType BillingMode]
+           [software.amazon.awssdk.http.urlconnection UrlConnectionHttpClient]
+           [software.amazon.awssdk.auth.credentials StaticCredentialsProvider AwsBasicCredentials]
+           [software.amazon.awssdk.regions Region]
+           [java.net URI]))
+
+;; ---------------------------------------------------------------------------
+;; Test identifiers
+;; ---------------------------------------------------------------------------
+
+(def test-user "test-user")
+(def test-account "test-account")
+(def test-port 8001)
+(def test-container-name "odin-test-dynamodb")
 
 ;; ---------------------------------------------------------------------------
 ;; DynamoDB Local (Docker) lifecycle
 ;; ---------------------------------------------------------------------------
-
-(def test-port 8001)
-(def test-container-name "odin-test-dynamodb")
 
 (defn start-test-dynamodb! []
   ;; Remove any leftover container from a previous crashed run
@@ -29,74 +43,63 @@
   (println "Stopping test DynamoDB Local...")
   (sh "docker" "stop" test-container-name))
 
-(defn create-test-client []
-  (aws/client {:api :dynamodb
-               :endpoint-override {:protocol :http
-                                   :hostname "localhost"
-                                   :port test-port}}))
+;; ---------------------------------------------------------------------------
+;; AWS SDK v2 (software.amazon.awssdk) client + table helpers
+;; ---------------------------------------------------------------------------
 
-(defn wait-for-dynamodb! [client]
+(defn build-local-client ^DynamoDbClient []
+  (-> (DynamoDbClient/builder)
+      (.httpClient (-> (UrlConnectionHttpClient/builder) (.build)))
+      (.region (Region/of "eu-west-1"))
+      (.endpointOverride (URI. (str "http://localhost:" test-port)))
+      (.credentialsProvider
+       (StaticCredentialsProvider/create (AwsBasicCredentials/create "local" "local")))
+      (.build)))
+
+(defn wait-for-dynamodb! [^DynamoDbClient client]
   (println "Waiting for DynamoDB Local to be ready...")
   (loop [retries 0]
-    (let [result (try
-                   (aws/invoke client {:op :ListTables :request {}})
-                   (catch Exception _ nil))]
+    (let [ready? (try (.listTables client) true (catch Exception _ false))]
       (cond
-        (and (map? result) (contains? result :TableNames))
-        (println "DynamoDB Local is ready")
+        ready?           (println "DynamoDB Local is ready")
+        (>= retries 30)  (throw (ex-info "DynamoDB Local did not become ready within 30 seconds" {}))
+        :else            (do (Thread/sleep 1000) (recur (inc retries)))))))
 
-        (>= retries 30)
-        (throw (ex-info "DynamoDB Local did not become ready within 30 seconds" {}))
+(defn- key-schema [pk sk]
+  ^java.util.Collection
+  [(-> (KeySchemaElement/builder) (.attributeName pk) (.keyType KeyType/HASH)  (.build))
+   (-> (KeySchemaElement/builder) (.attributeName sk) (.keyType KeyType/RANGE) (.build))])
 
-        :else
-        (do (Thread/sleep 1000)
-            (recur (inc retries)))))))
+(defn- attr-defs [pk sk]
+  ^java.util.Collection
+  [(-> (AttributeDefinition/builder) (.attributeName pk) (.attributeType ScalarAttributeType/S) (.build))
+   (-> (AttributeDefinition/builder) (.attributeName sk) (.attributeType ScalarAttributeType/S) (.build))])
+
+(defn create-table! [^DynamoDbClient client table-name pk sk]
+  (.createTable client
+                ^CreateTableRequest
+                (-> (CreateTableRequest/builder)
+                    (.tableName table-name)
+                    (.keySchema (key-schema pk sk))
+                    (.attributeDefinitions (attr-defs pk sk))
+                    (.billingMode BillingMode/PAY_PER_REQUEST)
+                    (.build))))
 
 (defn create-tables! [client]
-  (aws/invoke client
-              {:op :CreateTable
-               :request {:TableName "Transaction"
-                         :KeySchema [{:AttributeName "UserId"    :KeyType "HASH"}
-                                     {:AttributeName "Timestamp" :KeyType "RANGE"}]
-                         :AttributeDefinitions
-                         [{:AttributeName "UserId"    :AttributeType "S"}
-                          {:AttributeName "Timestamp" :AttributeType "S"}]
-                         :BillingMode "PAY_PER_REQUEST"}})
-  (aws/invoke client
-              {:op :CreateTable
-               :request {:TableName "Category"
-                         :KeySchema [{:AttributeName "UserId" :KeyType "HASH"}
-                                     {:AttributeName "Id"     :KeyType "RANGE"}]
-                         :AttributeDefinitions
-                         [{:AttributeName "UserId" :AttributeType "S"}
-                          {:AttributeName "Id"     :AttributeType "S"}]
-                         :BillingMode "PAY_PER_REQUEST"}})
+  (create-table! client db2/transaction-table-name "UserId" "Timestamp")
+  (create-table! client db2/category-table-name    "UserId" "Id")
   (println "Tables created"))
 
 ;; ---------------------------------------------------------------------------
-;; Table cleanup helper
+;; Table cleanup helper (reuses db2's own scan/delete path)
 ;; ---------------------------------------------------------------------------
 
 (defn clear-transaction-table!
-  "Delete every item in the Transaction table.
-   Uses a Scan to discover keys, then BatchWriteItem to remove them."
+  "Delete every transaction belonging to the test user."
   []
-  (let [response (aws/invoke db2/dynamodb-client
-                              {:op :Scan
-                               :request {:TableName "Transaction"
-                                         :ProjectionExpression "UserId, #ts"
-                                         :ExpressionAttributeNames {"#ts" "Timestamp"}}})
-        items (:Items response)]
-    (when (seq items)
-      (doseq [batch (partition-all 25 items)]
-        (let [delete-requests (mapv (fn [item]
-                                      {:DeleteRequest
-                                       {:Key {"UserId"    (:UserId item)
-                                              "Timestamp" (:Timestamp item)}}})
-                                    batch)]
-          (aws/invoke db2/dynamodb-client
-                      {:op :BatchWriteItem
-                       :request {:RequestItems {"Transaction" delete-requests}}}))))))
+  (doseq [item (db2/scan-table-for-user db2/transaction-table-name test-user)]
+    (db2/delete-item db2/transaction-table-name
+                     {:UserId (:UserId item) :Timestamp (:Timestamp item)})))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -108,9 +111,9 @@
   (date/localtime->unixtime (str iso-str "T00:00:00")))
 
 (defn get-all-db-transactions
-  "Read every transaction from the Transaction table via the normal db2 path."
+  "Read every transaction for the test user via the normal db2 path."
   []
-  (db2/get-transactions-after "2015-01-01" true))
+  (db2/get-transactions-after test-user "2015-01-01" true))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixtures
@@ -118,18 +121,17 @@
 
 (defn dynamodb-fixture
   "Once-per-namespace fixture: starts a fresh DynamoDB Local Docker container
-   on a dedicated port, creates the required tables, swaps db2/dynamodb-client
-   to point at it, and tears it all down afterwards."
+   on a dedicated port, points db2/dynamodb-client at it, creates the required
+   tables, and tears it all down afterwards."
   [f]
   (start-test-dynamodb!)
-  (let [test-client (create-test-client)]
-    (try
-      (wait-for-dynamodb! test-client)
-      (create-tables! test-client)
-      (with-redefs [db2/dynamodb-client test-client]
-        (f))
-      (finally
-        (stop-test-dynamodb!)))))
+  (try
+    (with-redefs [db2/dynamodb-client (delay (build-local-client))]
+      (wait-for-dynamodb! @db2/dynamodb-client)
+      (create-tables! @db2/dynamodb-client)
+      (f))
+    (finally
+      (stop-test-dynamodb!))))
 
 (defn clean-table-fixture
   "Per-test fixture: empties the Transaction table so each test starts clean."
@@ -187,13 +189,17 @@
                           updated-bank-txns)))    ; 2nd call – with updates
 
                     ;; no categories needed for this test
-                    db2/get-categories
-                    (fn [] [])]
+                    category-svc/get-categories-with-filters
+                    (fn [_user-id] [])
+
+                    ;; no loan histories to extend
+                    db2/get-loans
+                    (fn [_user-id] [])]
 
         ;; ============================================================
         ;; FIRST CALL – initial load
         ;; ============================================================
-        (ts/get-transactions2 {:access_token "test"} "test-key")
+        (ts/get-transactions2 test-user test-account {:access_token "test"} "test-key")
 
         (let [db-txns (get-all-db-transactions)]
           (is (= 3 (count db-txns))
@@ -206,7 +212,7 @@
         ;; ============================================================
         ;; SECOND CALL – bank returns updated descriptions / dates
         ;; ============================================================
-        (ts/get-transactions2 {:access_token "test"} "test-key")
+        (ts/get-transactions2 test-user test-account {:access_token "test"} "test-key")
 
         (let [db-txns      (get-all-db-transactions)
               descriptions (set (map :description db-txns))]

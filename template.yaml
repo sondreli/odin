@@ -59,6 +59,14 @@ Resources:
             TableName: !Ref UserTable
         - DynamoDBCrudPolicy:
             TableName: !Ref AccountTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LoanTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InvestmentTransactionTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref GroceryItemTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SecurityPriceTable
       Events:
         ApiCatchAll:
           Type: HttpApi
@@ -207,6 +215,70 @@ Resources:
         - AttributeName: UserId
           KeyType: HASH
         - AttributeName: AccountId
+          KeyType: RANGE
+
+  LoanTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Loan
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: UserId
+          AttributeType: S
+        - AttributeName: Id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: UserId
+          KeyType: HASH
+        - AttributeName: Id
+          KeyType: RANGE
+
+  InvestmentTransactionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: InvestmentTransaction
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: UserId
+          AttributeType: S
+        - AttributeName: Timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: UserId
+          KeyType: HASH
+        - AttributeName: Timestamp
+          KeyType: RANGE
+
+  GroceryItemTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: GroceryItem
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: UserId
+          AttributeType: S
+        - AttributeName: Timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: UserId
+          KeyType: HASH
+        - AttributeName: Timestamp
+          KeyType: RANGE
+
+  SecurityPriceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SecurityPrice
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: Isin
+          AttributeType: S
+        - AttributeName: Date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Isin
+          KeyType: HASH
+        - AttributeName: Date
           KeyType: RANGE
 
   # ---- S3 Frontend Bucket ----

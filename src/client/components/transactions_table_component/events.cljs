@@ -8,6 +8,16 @@
   (let [value (s/join "\n" lines)]
     {:description (vec lines) :value value}))
 
+(defn meaningful-filter?
+  "A filter worth evaluating against the whole transaction set. Plain filters
+  shorter than 2 chars match almost everything, so we don't run them (avoids
+  loading thousands of rows into the table). Regex filters are trusted as-is."
+  [s]
+  (and (some? s)
+       (not= s "")
+       (or (and (>= (count s) 6) (= (subs s 0 6) "regex:"))
+           (>= (count s) 2))))
+
 (reg-event-db
  :mark-transaction
  (fn [db [_ raw-sub-filter]]
@@ -19,12 +29,14 @@
          description (:description transaction)
          is-match? (category/match-fun description sub-filter)
          all-transactions (:all-transactions db)
-         filter-stats (category/calculate-filter-statistics all-transactions sub-filter effective-category-id)
+         filter-stats (when (meaningful-filter? sub-filter)
+                        (category/calculate-filter-statistics all-transactions sub-filter effective-category-id))
          builder-cat (:builder-category db)
          edit-idx (-> db :transaction-row-editor :editing-filter-index)
          updated-db (-> db
                         (assoc-in [:transaction-row-editor :new-sub-filter] sub-filter)
                         (assoc-in [:transaction-row-editor :is-match?] is-match?)
+                        (assoc-in [:transaction-row-editor :fb-msg] nil)
                         (assoc-in [:transaction-row-editor :filter-statistics] filter-stats))]
      (if (and builder-cat (seq sub-filter))
        (let [existing-lines (vec (or (-> builder-cat :marker :description) []))
@@ -166,3 +178,83 @@
      {:dispatch [:save-category-filters filters-to-save]})))
 
 ; :toggle-transaction-tag is defined in client.events (needs HTTP persistence)
+
+;; --- Inline filter builder (programming-by-example) -------------------------
+;; Lives directly in the transaction row editor. The editor's :new-sub-filter is
+;; the single source of truth for the pattern; the merged matches table reads the
+;; live :filter-statistics. Each row can be marked positive (:fb-positives) or
+;; negative (:fb-negatives). Toggling never regenerates the pattern — the UI just
+;; highlights "Foreslå filter" — and :fb-suggest synthesizes a new pattern.
+
+(defn- displayed-transactions [db]
+  (-> db :displayed-transactions-data :displayed-transactions))
+
+(defn- fb-suggest-pattern
+  "Synthesize a pattern from the current example sets.
+  - Negatives: the explicitly excluded transactions.
+  - Positives: when some rows are explicitly marked, ONLY those (plus the edited
+    transaction) — this lets the user pin a few examples when there are too many
+    matches. Otherwise the edited transaction plus everything the current pattern
+    matches (minus the negatives)."
+  [db]
+  (let [editor (:transaction-row-editor db)
+        positives (or (:fb-positives editor) #{})
+        negatives (or (:fb-negatives editor) #{})
+        all (:all-transactions db)
+        by-key (into {} (map (juxt category/tx-key identity) all))
+        cur-pattern (:new-sub-filter editor)
+        base-tx (get (displayed-transactions db) (:row-index editor))
+        matches (when (and cur-pattern (not= cur-pattern ""))
+                  (filter #(and (some? (:description %))
+                                (category/match-fun (:description %) cur-pattern))
+                          all))
+        ;; Positives: explicit Match rows when any are marked; otherwise everything
+        ;; the current filter matches; otherwise (no matches yet) seed from the edited
+        ;; transaction. The edited transaction is NOT force-added — it may be an
+        ;; unrelated row the editor was opened on (e.g. a REMA row while building a
+        ;; KJELL filter), which would make the examples contradictory.
+        pos-source (cond
+                     (seq positives) (keep by-key positives)
+                     (seq matches)   matches
+                     :else           [base-tx])
+        pos-descs (->> pos-source
+                       (remove nil?)
+                       (remove #(contains? negatives (category/tx-key %)))
+                       (map :description)
+                       (remove nil?)
+                       distinct)
+        neg-descs (->> negatives (keep by-key) (map :description) (remove nil?) distinct)
+        ;; The filter that created the current group must remain part of the result,
+        ;; so the suggestion can't drift to an unrelated common token.
+        required (category/filter-stem cur-pattern)]
+    (:pattern (category/synthesize-filter pos-descs neg-descs required))))
+
+(reg-event-db
+ :fb-set-example
+ (fn [db [_ tx-k polarity]]
+   ;; Set a row's polarity (:positive / :negative / :neutral). Does NOT regenerate
+   ;; the pattern — the UI highlights "Foreslå filter" when it goes stale.
+   (let [editor (:transaction-row-editor db)
+         pos (disj (or (:fb-positives editor) #{}) tx-k)
+         neg (disj (or (:fb-negatives editor) #{}) tx-k)
+         [pos neg] (case polarity
+                     :positive [(conj pos tx-k) neg]
+                     :negative [pos (conj neg tx-k)]
+                     [pos neg])]
+     (-> db
+         (assoc-in [:transaction-row-editor :fb-positives] pos)
+         (assoc-in [:transaction-row-editor :fb-negatives] neg)
+         (assoc-in [:transaction-row-editor :fb-msg] nil)))))
+
+(reg-event-fx
+ :fb-suggest
+ (fn [{db :db} _]
+   (let [cur (-> db :transaction-row-editor :new-sub-filter)
+         suggestion (fb-suggest-pattern db)]
+     (if (= suggestion cur)
+       ;; Nothing to improve with the current selection — tell the user why instead
+       ;; of silently doing nothing.
+       {:db (assoc-in db [:transaction-row-editor :fb-msg]
+                      "Fant ikke et smalere filter. Marker treffene som ikke skal med som «Utelat».")}
+       {:db (assoc-in db [:transaction-row-editor :fb-msg] nil)
+        :dispatch [:mark-transaction suggestion]}))))

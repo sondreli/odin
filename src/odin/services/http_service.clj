@@ -1,4 +1,5 @@
 (ns odin.services.http-service
+  (:require [clojure.data.json :as json])
   (:import [java.net URI URLEncoder]
            [java.net.http HttpClient HttpClient$Redirect HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]))
@@ -57,3 +58,18 @@
       (when (>= status 400)
         (throw (ex-info (str "HTTP " status) result)))
       result)))
+
+(defn http-post-json
+  "Perform a POST with JSON body. opts supports :body (map/string), :headers.
+   Returns {:status int :body string}."
+  [url {:keys [body headers]}]
+  (let [body-str (if (string? body) body (json/write-str body))
+        builder (-> (HttpRequest/newBuilder)
+                    (.uri (URI/create url))
+                    (.header "Content-Type" "application/json")
+                    (.POST (HttpRequest$BodyPublishers/ofString body-str)))]
+    (doseq [[k v] headers]
+      (.header builder (name k) (str v)))
+    (let [response (.send ^HttpClient @client (.build builder) (HttpResponse$BodyHandlers/ofString))]
+      {:status (.statusCode response)
+       :body   (.body response)})))

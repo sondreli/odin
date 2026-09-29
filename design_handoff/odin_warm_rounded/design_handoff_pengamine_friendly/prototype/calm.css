@@ -1,0 +1,260 @@
+/* CALM EDITORIAL override — opposite of Bloomberg
+   Apply on top of styles.css by loading after it. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --ff-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  --ff-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --ff-serif: 'Newsreader', Georgia, serif;
+
+  --fs-xs: 11.5px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 19px;
+  --fs-xl: 30px;
+  --row-h: 44px;
+}
+
+[data-theme="dark"] {
+  --bg: #16181c;
+  --bg-1: #1c1f23;
+  --bg-2: #22262c;
+  --bg-3: #2a2f36;
+  --bg-hover: #21242a;
+  --bg-active: #262a31;
+  --border: #2a2f36;
+  --border-soft: #23272d;
+  --border-strong: #383e47;
+  --text: #e4e2dd;
+  --text-dim: #8a8780;
+  --text-faint: #5a5852;
+  --text-bright: #fafaf7;
+  --c-up: #6fb98f;
+  --c-down: #d97a6c;
+  --c-accent: #a8b890;
+  --link: #b3c5e0;
+  --treemap-border: rgba(255,255,255,0.06);
+}
+
+[data-theme="light"] {
+  --bg: #faf8f3;
+  --bg-1: #ffffff;
+  --bg-2: #faf8f3;
+  --bg-3: #f0eee6;
+  --bg-hover: #f5f3eb;
+  --bg-active: #ede9dd;
+  --border: #e6e2d5;
+  --border-soft: #efece2;
+  --border-strong: #d4d0c0;
+  --text: #2a2826;
+  --text-dim: #7a7770;
+  --text-faint: #a8a59c;
+  --text-bright: #14130f;
+  --c-up: #4c8567;
+  --c-down: #b85847;
+  --c-accent: #5a7250;
+  --link: #4a6585;
+  --treemap-border: rgba(255,255,255,0.7);
+}
+
+body { background: var(--bg); }
+[data-theme="dark"] body { background: #0d0f12; }
+[data-theme="light"] body { background: #f0ede4; }
+
+#root {
+  max-width: 1500px;
+  padding: 0 32px;
+}
+
+/* No darkening on dark mode — calm wants quieter colors anyway */
+[data-theme="dark"] .treemap-wrap > div > div,
+[data-theme="dark"] .cat-swatch,
+[data-theme="dark"] .cat-stripe,
+[data-theme="dark"] .tag-dot,
+[data-theme="dark"] .bar-stack > div,
+[data-theme="dark"] .budget-bar-fill,
+[data-theme="dark"] .andel-bar > div {
+  filter: brightness(0.85) saturate(0.7);
+}
+
+/* Headers in serif */
+h1, h2, h3 {
+  font-family: var(--ff-serif);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+.page-header h2 { font-weight: 500; font-style: italic; }
+.big-mono {
+  font-family: var(--ff-serif);
+  font-style: normal;
+  font-weight: 400;
+  font-size: 36px;
+  letter-spacing: -0.025em;
+}
+.big-mono .kr-suffix { font-family: var(--ff-sans); font-size: 14px; font-style: normal; }
+
+/* Brand */
+.brand-mark { display: none; }
+.brand-name {
+  font-family: var(--ff-serif);
+  font-style: italic;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+}
+
+/* Nav sidebar — more breathing room */
+.nav-sidebar { width: 220px; padding: 24px 0; }
+.nav-list { padding: 0 12px; }
+.nav-item {
+  padding: 11px 14px;
+  border-radius: 8px;
+  border-left: none !important;
+  font-size: var(--fs-md);
+  gap: 12px;
+  margin-bottom: 3px;
+}
+.nav-item.is-active {
+  background: var(--bg-active);
+  font-weight: 500;
+}
+.brand { padding: 0 22px 24px; }
+
+/* Cards have soft borders, generous padding, no harsh ruled rows */
+.content-scroll { padding: 36px 44px; }
+.metrics-bar,
+.treemap-wrap,
+.content-main,
+.sidebar-panel,
+.budget-tile,
+.ribbon,
+.budget-table-wrap,
+.loan-summary-grid > *,
+.loan-comparison,
+.loan-card,
+.account-summary,
+.accounts-table,
+.add-account-form,
+.rep-list,
+.rep-detail,
+.report-grid,
+.modal {
+  border-radius: 14px;
+  border-color: var(--border);
+}
+
+/* Treemap: even softer borders */
+[data-tm-borders="subtle"] {
+  --treemap-border: rgba(255,255,255,0.04);
+}
+
+/* Tables — wider rows, no shaded header */
+.txn-table thead th,
+.budget-table thead th,
+.schedule-table th,
+.accounts-table thead th {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.txn-table tbody tr.txn-row { height: var(--row-h); }
+.txn-table tbody td,
+.budget-table tbody td,
+.accounts-table tbody td { padding: 10px 16px; }
+.txn-table tbody tr.txn-row { border-bottom: 1px solid var(--border-soft); }
+.txn-table tbody tr.txn-row:hover { background: var(--bg-hover); }
+
+/* Cat stripes -> small dots */
+.txn-table tbody td.cat-stripe,
+.sidebar-table .cat-stripe,
+.budget-table tbody td.cat-stripe {
+  width: 18px;
+  background: transparent !important;
+  position: relative;
+}
+.txn-table tbody td.cat-stripe::after,
+.budget-table tbody td.cat-stripe::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 8px; height: 8px;
+  background: var(--_cat-color, currentColor);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Status labels softer */
+.status-label {
+  font-size: var(--fs-xs);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+/* Period selector — pill */
+.period-sel {
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-2);
+  border-color: var(--border);
+}
+.period-year { background: transparent; border-right: 1px solid var(--border); }
+.period-month.is-active {
+  background: var(--c-accent);
+  color: var(--bg-1);
+}
+
+/* Segmented — pill */
+.seg { border-radius: 999px; padding: 2px; gap: 2px; background: var(--bg-2); }
+.seg-btn { border-right: none !important; border-radius: 999px; padding: 7px 18px !important; font-size: 13px !important; }
+.seg-btn.is-active { background: var(--bg-1); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+/* Buttons — round */
+.btn-primary, .btn-ghost, .btn-danger { border-radius: 999px; padding: 9px 20px; font-size: var(--fs-md); }
+.btn-primary-xs, .btn-ghost-xs { border-radius: 999px; padding: 5px 14px; font-size: 12px; }
+
+/* Sidebar — quieter */
+.sidebar-panel { padding: 22px 18px; }
+.sidebar-title {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
+.sidebar-table td { padding: 8px 6px; }
+.cat-swatch { border-radius: 50%; width: 10px; height: 10px; }
+.tag-dot { width: 8px; height: 8px; }
+
+/* Ribbon — cards */
+.ribbon { gap: 12px; background: transparent; border: none; padding: 0; }
+.ribbon-cell { background: var(--bg-1); border: 1px solid var(--border) !important; border-radius: 14px; padding: 18px 20px; }
+.ribbon-name { font-family: var(--ff-serif); font-weight: 500; font-size: 18px; }
+.ribbon-bar { height: 4px; border-radius: 2px; }
+
+/* Budget tiles — bigger */
+.budget-summary-grid { gap: 16px; }
+.budget-tile { padding: 22px 24px; }
+
+/* Loan cards */
+.loan-card-head { padding: 22px 24px; }
+.loan-name { font-family: var(--ff-serif); font-weight: 500; font-size: 19px; }
+
+/* Inputs — quieter focus */
+.txn-input, .txn-select, .be-input, .form-input, .sb-input, .rep-expr-input {
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: var(--bg-2);
+}
+
+/* No filter mark dot */
+.filter-mark { color: var(--text-faint); }

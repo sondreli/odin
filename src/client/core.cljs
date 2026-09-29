@@ -25,8 +25,18 @@
   (views/remove-barchart)
   (print "Hello World reloaded!"))
 
+(defn- stored-theme []
+  (try
+    (let [v (.getItem js/localStorage "odin-theme")]
+      (case v
+        "dark"  :dark
+        "light" :light
+        :light))
+    (catch :default _ :light)))
+
 (defn main! []
   (dispatch-sync [:initialise-db])
+  (rf/dispatch [:set-theme (stored-theme)])
   (rf/dispatch [:check-auth])
   (mount)
   (print "Hello World!"))

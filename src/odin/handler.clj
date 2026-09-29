@@ -7,6 +7,11 @@
             [odin.services.auth-service :as auth]
             [odin.services.user-service :as user]
             [odin.services.account-service :as account]
+            [odin.services.nordnet-service :as nordnet]
+            [odin.services.grocery-service :as grocery]
+            [odin.services.coop-auth :as coop-auth]
+            [odin.services.wealth-service :as wealth]
+            [odin.services.price-service :as price]
             [odin.services.transaction-service :as transaction]
             [odin.services.category-service :as category]
             [odin.services.report-service :as report]
@@ -17,18 +22,43 @@
             [ring.middleware.cors :refer [wrap-cors]]))
 
 (defn wrap-auth
-  "Middleware that verifies JWT from Authorization header and injects :user-id."
+  "Middleware that verifies JWT from Authorization header and injects :user-id.
+   OPTIONS (CORS preflight) is passed through without a token."
   [handler]
   (fn [request]
-    (let [auth-header (get-in request [:headers "authorization"])
-          token (when (and auth-header (s/starts-with? auth-header "Bearer "))
-                  (subs auth-header 7))
-          claims (when token (user/verify-jwt token))]
-      (if claims
-        (handler (assoc request :user-id (:user-id claims)))
-        {:status 401
+    (if (= :options (:request-method request))
+      {:status 200 :headers {} :body ""}
+      (let [auth-header (get-in request [:headers "authorization"])
+            token (when (and auth-header (s/starts-with? auth-header "Bearer "))
+                    (subs auth-header 7))
+            claims (when token (user/verify-jwt token))]
+        (if claims
+          (handler (assoc request :user-id (:user-id claims)))
+          {:status 401
+           :headers {"Content-Type" "application/json"}
+           :body (json/write-str {:error "Unauthorized"})})))))
+
+(defn wrap-not-found
+  "Compojure returns nil for unmatched routes; a nil response skips CORS headers
+   and the browser reports a CORS error instead of 404."
+  [handler]
+  (fn [request]
+    (or (handler request)
+        {:status 404
          :headers {"Content-Type" "application/json"}
-         :body (json/write-str {:error "Unauthorized"})}))))
+         :body (json/write-str {:error "Not found"})})))
+
+(defn wrap-exceptions
+  [handler]
+  (fn [request]
+    (try
+      (handler request)
+      (catch Exception e
+        (println "Unhandled handler error:" (.getMessage e))
+        (.printStackTrace e)
+        {:status 500
+         :headers {"Content-Type" "application/json"}
+         :body (json/write-str {:error (or (.getMessage e) "Internal server error")})}))))
 
 (defn wrap-strip-prefix
   "Middleware that strips known path prefixes (stage name, /api) from URI."
@@ -104,6 +134,7 @@
   (cpj/GET "/transactions/recent" params transaction/recent_transaction_handler)
   (cpj/GET "/transactions/:id/details" [id] (partial transaction/transaction_details_handler id))
   (cpj/GET "/transactions" params transaction/transaction_handler)
+  (cpj/GET "/investment-transactions" params transaction/investment-transactions-handler)
   (cpj/GET "/balance" params transaction/balance_handler)
   (cpj/GET "/categories" params category/categories-handler)
   (cpj/POST "/category" params category/store-category-handler)
@@ -123,8 +154,19 @@
   (cpj/GET "/loans" params loan/loans-handler)
   (cpj/POST "/loan" params loan/store-loan-handler)
   (cpj/DELETE "/loan/:id" [id] (partial loan/delete-loan-handler id))
-  (cpj/GET "/accounts" params account/accounts-handler)
+  (cpj/GET "/accounts" params transaction/accounts-handler)
   (cpj/POST "/account/connect" params account/connect-handler)
+  (cpj/POST "/account/:id/reauth" [id] (partial account/reauth-handler id))
+  (cpj/POST "/account/coop/start" params coop-auth/start-handler)
+  (cpj/POST "/account/:id/coop/complete" [id] (partial coop-auth/complete-handler id))
+  (cpj/POST "/account/:id/import-csv" [id] (partial nordnet/import-csv-handler id))
+  (cpj/POST "/account/:id/import-credit-csv" [id] (partial nordnet/import-credit-csv-handler id))
+  (cpj/GET "/grocery/items" params grocery/items-handler)
+  (cpj/POST "/grocery/sync" params grocery/sync-handler)
+  (cpj/GET "/wealth" params wealth/wealth-handler)
+  (cpj/GET "/leverage-settings" params wealth/leverage-settings-handler)
+  (cpj/POST "/leverage-setting" params wealth/save-leverage-setting-handler)
+  (cpj/POST "/prices/refresh" params price/refresh-handler)
   (cpj/DELETE "/account/:id" [id] (partial account/delete-account-handler id))
   (cpj/DELETE "/user" params user/delete-user-handler))
 
@@ -140,8 +182,13 @@
 (def app-handler
   (delay
     (-> app
+        wrap-not-found
+        wrap-exceptions
         (wrap-json-body {:key-fn keyword})
-        (wrap-cors :access-control-allow-origin [(re-pattern @config/cors-origin)]
-                   :access-control-allow-methods [:get :put :post :delete]
+        (wrap-cors :access-control-allow-origin [(re-pattern
+                                                 (str "^"
+                                                      (java.util.regex.Pattern/quote @config/cors-origin)
+                                                      "$"))]
+                   :access-control-allow-methods [:get :put :post :delete :options]
                    :access-control-allow-headers ["Origin" "X-Requested-With" "Content-Type" "Accept" "Authorization"])
         wrap-strip-prefix)))

@@ -137,10 +137,45 @@
                           {:type :token-expired}))
           (throw e))))))
 
+;; Per-account refresh serialization.
+;; Sparebank1 uses rotating, single-use refresh tokens: a successful refresh
+;; invalidates the old refresh token. If several requests refresh the same account
+;; concurrently (e.g. balance + accounts + transactions all fire on page load),
+;; one wins and the others get HTTP 400 invalid_grant — falsely looking "expired".
+;; We serialize refresh per account and share the freshly-minted tokens via an
+;; in-process cache so the waiters reuse them instead of re-refreshing.
+(defonce ^:private account-refresh-locks (atom {}))
+(defonce ^:private account-token-cache (atom {}))
+
+(defn- lock-for [k]
+  (-> account-refresh-locks
+      (swap! update k (fn [existing] (or existing (Object.))))
+      (get k)))
+
+(defn- valid? [tokens]
+  (and tokens (not (is_token_expired tokens))))
+
 (defn get-tokens-for-account
-  [client-id client-secret load-fn store-fn]
-  (let [tokens (load-fn)]
-    (if (and tokens (not (is_token_expired tokens)))
-      tokens
-      (when tokens
-        (refresh-account-tokens client-id client-secret tokens store-fn)))))
+  "Load (and if needed refresh) bank tokens for an account. When `lock-key`
+   (the account-id) is supplied, refresh is serialized per account so concurrent
+   callers don't each consume the same rotating refresh token."
+  ([client-id client-secret load-fn store-fn]
+   (get-tokens-for-account client-id client-secret load-fn store-fn nil))
+  ([client-id client-secret load-fn store-fn lock-key]
+   (let [tokens (load-fn)]
+     (cond
+       (valid? tokens) tokens
+       (nil? tokens)   nil
+       (nil? lock-key) (refresh-account-tokens client-id client-secret tokens store-fn)
+       :else
+       (locking (lock-for lock-key)
+         ;; Inside the lock another caller may have just refreshed — prefer a
+         ;; non-expired token from the shared cache or a fresh DB read.
+         (let [cached (get @account-token-cache lock-key)
+               reloaded (load-fn)]
+           (or (first (filter valid? [cached reloaded]))
+               (let [new-tokens (refresh-account-tokens
+                                  client-id client-secret
+                                  (or reloaded tokens) store-fn)]
+                 (swap! account-token-cache assoc lock-key new-tokens)
+                 new-tokens))))))))

@@ -59,6 +59,8 @@
                    [:request-all-tags]
                    [:request-all-loans]
                    [:request-accounts]
+                   [:request-investment-transactions]
+                   [:request-grocery-items]
                    [:request-balance]]})))
 
 (reg-event-db
@@ -95,6 +97,8 @@
                    [:request-all-tags]
                    [:request-all-loans]
                    [:request-accounts]
+                   [:request-investment-transactions]
+                   [:request-grocery-items]
                    [:request-balance]]})))
 
 (reg-event-db
@@ -151,6 +155,33 @@
  (fn [db [_ view]]
    (assoc db :auth-view view)))
 
+(reg-event-db
+ :set-treemap-show-targets!
+ (fn [db [_ v]]
+   (assoc db :treemap-show-targets? (boolean v))))
+
+(reg-event-db
+ :set-treemap-show-filters!
+ (fn [db [_ v]]
+   (assoc db :treemap-show-filters? (boolean v))))
+
+(reg-event-db
+ :set-transactions-search
+ (fn [db [_ s]]
+   (assoc db :transactions-search (or s ""))))
+
+(reg-event-db
+ :set-theme
+ (fn [db [_ theme]]
+   (let [theme (or theme :light)
+         theme-str (name theme)]
+     (try
+       (.setItem js/localStorage "odin-theme" theme-str)
+       (catch :default _ nil))
+     (when (and (exists? js/document) (.-documentElement js/document))
+       (set! (.. js/document -documentElement -dataset -theme) theme-str))
+     (assoc db :theme theme))))
+
 (reg-event-fx
  :delete-user
  (fn [{db :db} _]
@@ -198,13 +229,90 @@
 (reg-event-db
  :accounts-response
  (fn [db [_ response]]
-   (assoc db :accounts (js->clj response))))
+   (let [accounts (js->clj response)
+         grocery-providers #{"trumf" "rema" "coop"}
+         bank-accounts (remove #(contains? grocery-providers (:provider %)) accounts)
+         db (assoc db :accounts accounts)]
+     ;; Default the transactions-page selector to the first bank/investment account.
+     (if (and (nil? (:selected-account-id db)) (seq bank-accounts))
+       (-> db
+           (assoc :selected-account-id (:account-id (first bank-accounts)))
+           (utils/apply-period2 nil (:period db))
+           (as-> d (utils/apply-category d (:filter-path d))))
+       db))))
 
 (reg-event-db
  :accounts-failure
  (fn [db [_ error]]
    (println "Failed to fetch accounts:" error)
    db))
+
+(defn- investment->display
+  "Map a raw Nordnet investment transaction into the transactions-table display shape."
+  [{:keys [type quantity security-name] :as txn}]
+  (let [name (or security-name "")
+        description (case type
+                      "buy"  (str "Kjøpt " quantity " " name)
+                      "sell" (str "Solgt " (js/Math.abs (or quantity 0)) " " name)
+                      "cash" (if (seq name) name "Kontantbevegelse")
+                      (or name type))]
+    {:user-id (:user-id txn)
+     :account-id (:account-id txn)
+     :date (:date txn)
+     :date-index (or (:date-index txn) 0)
+     :amount (:amount-nok txn)
+     :description description
+     :category-id nil
+     :source txn}))
+
+(reg-event-fx
+ :request-investment-transactions
+ (fn [_ _]
+   {:http-xhrio {:method          :get
+                 :uri             (api/uri "/investment-transactions")
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax-transit/transit-response-format)
+                 :on-success      [:investment-transactions-response]
+                 :on-failure      [:investment-transactions-failure]}}))
+
+(reg-event-db
+ :investment-transactions-response
+ (fn [db [_ response]]
+   ;; "credit" rows are kredittkonto movements imported only to drive the wealth
+   ;; chart's leverage series — they are not part of the transactions feed.
+   (assoc db :investment-transactions
+          (->> (:transactions response)
+               (remove #(= "credit" (:type %)))
+               (mapv investment->display)))))
+
+(reg-event-db
+ :investment-transactions-failure
+ (fn [db [_ error]]
+   (println "Failed to fetch investment transactions:" error)
+   db))
+
+(reg-event-db
+ :select-account
+ (fn [db [_ account-id]]
+   (let [db (assoc db :selected-account-id account-id)
+         source (utils/account-source-transactions db)
+         current-period (:period db)
+         ;; If the current period has no transactions for the newly selected account
+         ;; (e.g. switching to Nordnet whose latest activity predates the current month),
+         ;; jump to the latest month that does — mirrors process-transactions on load.
+         period (if (and (seq source)
+                         (empty? (date/period-transactions source current-period)))
+                  (let [latest (js/Date. (:date (last source)))
+                        y (.getFullYear latest)
+                        m (.getMonth latest)]
+                    {:start (js/Date. y m 1)
+                     :end (js/Date. y (inc m) 1)
+                     :period-type :month})
+                  current-period)]
+     (-> db
+         (utils/apply-period2 nil period)
+         (as-> d (utils/apply-category d (:filter-path d)))))))
 
 (reg-event-fx
  :request-balance
@@ -219,7 +327,10 @@
 (reg-event-db
  :balance-response
  (fn [db [_ response]]
-   (assoc db :balance (js->clj response))))
+   (-> db
+       (assoc :balance (js->clj response))
+       (assoc :bank-reauth (when (:reauth-required response)
+                             {:account-id (:reauth-account-id response)})))))
 
 (reg-event-db
  :balance-failure
@@ -245,17 +356,56 @@
 
 (reg-event-fx
  :connect-account-success
- (fn [_ [_ response]]
-   (let [result (js->clj response)
-         oauth-url (:oauth-url result)]
-     (when oauth-url
-       (.assign js/window.location oauth-url))
-     {:dispatch [:request-accounts]})))
+ (fn [{db :db} [_ response]]
+   (let [result (js->clj response :keywordize-keys true)
+         oauth-url (:oauth-url result)
+         coop? (or (:coop-login result) (= "coop" (some-> result :account :provider)))]
+     (cond
+       coop?
+       (do
+         (when oauth-url (.open js/window oauth-url "_blank"))
+         {:db (assoc db :coop-login {:account-id (some-> result :account :account-id)
+                                     :oauth-url oauth-url
+                                     :status :awaiting})
+          :dispatch [:request-accounts]})
+
+       oauth-url
+       (do (.assign js/window.location oauth-url)
+           {:dispatch [:request-accounts]})
+
+       :else
+       {:dispatch [:request-accounts]}))))
 
 (reg-event-db
  :connect-account-failure
  (fn [db [_ error]]
    (println "Failed to connect account:" error)
+   db))
+
+(reg-event-fx
+ :reauth-account
+ (fn [_ [_ account-id]]
+   {:http-xhrio {:method          :post
+                 :uri             (api/uri (str "/account/" account-id "/reauth"))
+                 :params          {}
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:reauth-account-success]
+                 :on-failure      [:reauth-account-failure]}}))
+
+(reg-event-fx
+ :reauth-account-success
+ (fn [_ [_ response]]
+   (let [oauth-url (:oauth-url (js->clj response :keywordize-keys true))]
+     (when oauth-url
+       (.assign js/window.location oauth-url))
+     {})))
+
+(reg-event-db
+ :reauth-account-failure
+ (fn [db [_ error]]
+   (println "Failed to start bank re-authentication:" error)
    db))
 
 (reg-event-fx
@@ -279,6 +429,270 @@
  (fn [db [_ error]]
    (println "Failed to delete account:" error)
    db))
+
+(reg-event-fx
+ :import-nordnet-csv
+ (fn [{db :db} [_ account-id csv-text]]
+   {:db (assoc db :nordnet-import {:status :loading :account-id account-id})
+    :http-xhrio {:method          :post
+                 :uri             (api/uri (str "/account/" account-id "/import-csv"))
+                 :params          {:csv csv-text}
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:import-nordnet-csv-success]
+                 :on-failure      [:import-nordnet-csv-failure]}}))
+
+(reg-event-fx
+ :import-nordnet-csv-success
+ (fn [{db :db} [_ response]]
+   (let [result (js->clj response :keywordize-keys true)]
+     {:db (assoc db :nordnet-import {:status :success :result result})
+      :dispatch-n [[:request-accounts]
+                   [:request-investment-transactions]]})))
+
+(reg-event-db
+ :import-nordnet-csv-failure
+ (fn [db [_ error]]
+   (println "Failed to import Nordnet CSV:" error)
+   (assoc db :nordnet-import {:status :error :error error})))
+
+(reg-event-fx
+ :import-nordnet-credit-csv
+ (fn [{db :db} [_ account-id csv-text]]
+   {:db (assoc db :nordnet-import {:status :loading :account-id account-id})
+    :http-xhrio {:method          :post
+                 :uri             (api/uri (str "/account/" account-id "/import-credit-csv"))
+                 :params          {:csv csv-text}
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:import-nordnet-credit-csv-success]
+                 :on-failure      [:import-nordnet-csv-failure]}}))
+
+(reg-event-fx
+ :import-nordnet-credit-csv-success
+ (fn [{db :db} [_ response]]
+   (let [result (js->clj response :keywordize-keys true)]
+     {:db (assoc db :nordnet-import {:status :success :result result})
+      :dispatch-n [[:request-accounts]
+                   [:request-investment-transactions]
+                   [:request-wealth-data]]})))
+
+;;
+;; Grocery (dagligvarer) events
+;;
+
+(reg-event-fx
+ :request-grocery-items
+ (fn [_ _]
+   {:http-xhrio {:method          :get
+                 :uri             (api/uri "/grocery/items")
+                 :headers         (api/auth-header)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:grocery-items-response]
+                 :on-failure      [:grocery-items-failure]}}))
+
+(reg-event-db
+ :grocery-items-response
+ (fn [db [_ response]]
+   (assoc db :grocery-items (or (:items (js->clj response :keywordize-keys true)) []))))
+
+(reg-event-db
+ :grocery-items-failure
+ (fn [db [_ error]]
+   (println "Failed to fetch grocery items:" error)
+   db))
+
+(reg-event-fx
+ :start-coop-login
+ (fn [{db :db} [_ account-id account-name]]
+   {:db (assoc db :coop-login {:account-id account-id :status :starting})
+    :http-xhrio {:method          :post
+                 :uri             (api/uri "/account/coop/start")
+                 :params          (cond-> {}
+                                    account-id (assoc :account-id account-id)
+                                    account-name (assoc :account-name account-name))
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:connect-account-success]
+                 :on-failure      [:start-coop-login-failure]}}))
+
+(reg-event-db
+ :start-coop-login-failure
+ (fn [db [_ error]]
+   (assoc db :coop-login {:status :error
+                          :error (or (some-> error :response :error)
+                                     "Kunne ikke starte Coop-innlogging")})))
+
+(reg-event-fx
+ :complete-coop-login
+ (fn [{db :db} [_ account-id callback-url]]
+   {:db (assoc-in db [:coop-login :status] :loading)
+    :http-xhrio {:method          :post
+                 :uri             (api/uri (str "/account/" account-id "/coop/complete"))
+                 :params          {:callback-url callback-url}
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:complete-coop-login-success]
+                 :on-failure      [:complete-coop-login-failure]}}))
+
+(reg-event-fx
+ :complete-coop-login-success
+ (fn [{db :db} [_ _]]
+   (let [acc-id (get-in db [:coop-login :account-id])]
+     {:db (assoc db :coop-login {:status :success :account-id acc-id})
+      :dispatch-n (cond-> [[:request-accounts]]
+                    acc-id (conj [:sync-grocery acc-id]))})))
+
+(reg-event-db
+ :complete-coop-login-failure
+ (fn [db [_ error]]
+   (assoc db :coop-login (merge (:coop-login db)
+                                {:status :error
+                                 :error (or (some-> error :response :error)
+                                            "Kunne ikke hente Coop-token")}))))
+
+(reg-event-fx
+ :sync-grocery
+ (fn [{db :db} [_ account-id]]
+   {:db (assoc db :grocery-sync {:status :loading :account-id account-id})
+    :http-xhrio {:method          :post
+                 :uri             (api/uri "/grocery/sync")
+                 :params          (if account-id {:account-id account-id} {})
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:sync-grocery-success]
+                 :on-failure      [:sync-grocery-failure]}}))
+
+(reg-event-fx
+ :sync-grocery-success
+ (fn [{db :db} [_ response]]
+   (let [result (js->clj response :keywordize-keys true)]
+     {:db (assoc db :grocery-sync {:status :success :result result})
+      :dispatch-n [[:request-accounts]
+                   [:request-grocery-items]]})))
+
+(reg-event-db
+ :sync-grocery-failure
+ (fn [db [_ error]]
+   (println "Failed to sync grocery:" error)
+   (assoc db :grocery-sync {:status :error
+                            :error (or (some-> error :response :error)
+                                       "Synk feilet")})))
+
+(reg-event-fx
+ :request-wealth-data
+ (fn [{db :db} _]
+   {:db (assoc db :wealth-loading? true)
+    :http-xhrio {:method          :get
+                 :uri             (api/uri (str "/wealth?method=" (name (:wealth-method db :fifo))))
+                 :headers         (api/auth-header)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:wealth-data-response]
+                 :on-failure      [:wealth-data-failure]}}))
+
+(def ^:private prices-stale-ms (* 12 60 60 1000)) ;; 12 hours
+
+(reg-event-fx
+ :wealth-data-response
+ (fn [{db :db} [_ response]]
+   (let [data (js->clj response :keywordize-keys true)
+         updated (:prices-updated-at data)
+         updated-ms (when updated (.getTime (js/Date. updated)))
+         stale? (or (nil? updated-ms) (> (- (.now js/Date) updated-ms) prices-stale-ms))
+         has-holdings? (seq (get-in data [:total :points]))
+         ;; auto-refresh once per session when prices are stale and there's something to price
+         auto? (and stale? has-holdings? (not (:prices-auto-refreshed? db)))
+         new-db (cond-> (-> db (assoc :wealth-data data) (assoc :wealth-loading? false))
+                  auto? (assoc :prices-auto-refreshed? true))]
+     (if auto?
+       {:db new-db :dispatch [:refresh-prices]}
+       {:db new-db}))))
+
+(reg-event-db
+ :wealth-data-failure
+ (fn [db [_ error]]
+   (println "Failed to fetch wealth data:" error)
+   (assoc db :wealth-loading? false)))
+
+(reg-event-db
+ :set-wealth-asset
+ (fn [db [_ asset]]
+   (assoc db :wealth-selected-asset asset)))
+
+(reg-event-fx
+ :set-wealth-method
+ (fn [{db :db} [_ method]]
+   {:db (assoc db :wealth-method method)
+    :dispatch [:request-wealth-data]}))
+
+(reg-event-fx
+ :refresh-prices
+ (fn [{db :db} _]
+   {:db (assoc db :prices-refreshing? true)
+    :http-xhrio {:method          :post
+                 :uri             (api/uri "/prices/refresh")
+                 :params          {}
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:refresh-prices-success]
+                 :on-failure      [:refresh-prices-failure]}}))
+
+(reg-event-fx
+ :refresh-prices-success
+ (fn [{db :db} _]
+   {:db (assoc db :prices-refreshing? false)
+    :dispatch [:request-wealth-data]}))
+
+(reg-event-db
+ :refresh-prices-failure
+ (fn [db [_ error]]
+   (println "Failed to refresh prices:" error)
+   (assoc db :prices-refreshing? false)))
+
+(reg-event-fx
+ :request-leverage-settings
+ (fn [_ _]
+   {:http-xhrio {:method          :get
+                 :uri             (api/uri "/leverage-settings")
+                 :headers         (api/auth-header)
+                 :response-format (ajax/json-response-format {:keywords? false})
+                 :on-success      [:leverage-settings-response]
+                 :on-failure      [:leverage-settings-failure]}}))
+
+(reg-event-db
+ :leverage-settings-response
+ (fn [db [_ response]]
+   (assoc db :leverage-settings (js->clj response))))
+
+(reg-event-db
+ :leverage-settings-failure
+ (fn [db [_ error]]
+   (println "Failed leverage settings:" error)
+   db))
+
+(reg-event-fx
+ :save-leverage-setting
+ (fn [{db :db} [_ isin ratio]]
+   {:db (assoc-in db [:leverage-settings isin] ratio)   ;; optimistic
+    :http-xhrio {:method          :post
+                 :uri             (api/uri "/leverage-setting")
+                 :params          {:isin isin :pawn-percentage ratio}
+                 :headers         (api/auth-header)
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format {:keywords? true})
+                 :on-success      [:save-leverage-setting-success]
+                 :on-failure      [:leverage-settings-failure]}}))
+
+(reg-event-fx
+ :save-leverage-setting-success
+ (fn [_ _]
+   {:dispatch [:request-wealth-data]}))
 
 (defn- dedup-filters [filters]
   (->> filters
@@ -390,6 +804,8 @@
        (assoc :loading "done")
        (dissoc :refreshing?)
        (assoc :refresh-result {:new-count new-count :updated-count updated-count})
+       (assoc :bank-reauth (when (:reauth-required response)
+                             {:account-id (:reauth-account-id response)}))
        (process-transactions transactions)))))
 
 
@@ -472,6 +888,11 @@
    [db [_ bucket]]
    (-> db
        (assoc-in [:builder-category :bucket] bucket))))
+
+(reg-event-db
+ :update-builder-category-rollover
+ (fn [db [_ v]]
+   (assoc-in db [:builder-category :rollover?] (boolean v))))
 
 (reg-event-db
  :set-active-menu

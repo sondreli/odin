@@ -99,6 +99,38 @@
       (.provisionedThroughput (pt 5 5))
       (.build)))
 
+(def investment-schema
+  (-> (CreateTableRequest/builder)
+      (.tableName "InvestmentTransaction")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Timestamp" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Timestamp" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
+(def grocery-schema
+  (-> (CreateTableRequest/builder)
+      (.tableName "GroceryItem")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Timestamp" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Timestamp" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
+(def security-price-schema
+  (-> (CreateTableRequest/builder)
+      (.tableName "SecurityPrice")
+      (.keySchema [(ks "Isin" KeyType/HASH) (ks "Date" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "Isin" ScalarAttributeType/S) (ad "Date" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
+(def security-setting-schema
+  (-> (CreateTableRequest/builder)
+      (.tableName "SecuritySetting")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "Isin" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "Isin" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
 (defn create-table [client]
   (doseq [[name schema] [["Transaction" transaction-schema]
                           ["Category"    category-schema]
@@ -107,7 +139,11 @@
                           ["Filter"      filter-schema]
                           ["User"        user-schema]
                           ["Account"     account-schema]
-                          ["Loan"        loan-schema]]]
+                          ["Loan"        loan-schema]
+                          ["InvestmentTransaction" investment-schema]
+                          ["GroceryItem" grocery-schema]
+                          ["SecurityPrice" security-price-schema]
+                          ["SecuritySetting" security-setting-schema]]]
     (try
       (let [response (.createTable client schema)]
         (println name "table created:" response))

@@ -14,3 +14,21 @@ mobile/Odin/android/build/
 mobile/Odin/android/app/build/
 mobile/Odin/.metro-health-check*
 mobile/Odin/.expo/
+
+# Secrets and local data (never commit)
+odin-deployer_accessKeys.csv
+session_tokens.txt
+etc/odin.key
+samconfig.toml
+*-export.csv
+dynamodb_local_db/
+reports/
+target/
+
+# Editor / tool caches
+.calva/
+.claude/
+.clj-kondo/
+.cpcache/
+.lsp/
+.shadow-cljs/

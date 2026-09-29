@@ -24,10 +24,30 @@
     mymap
     (assoc mymap attr value)))
 
+(def amount-tolerance 0.10)            ; kr; treat amounts within ±0.10 as the same
+(def description-similarity-max 0.34)  ; max normalized levenshtein for a near-amount match (tunable)
+
+(defn candidates-within-tolerance
+  "All lookup-map entries whose amount key is within amount-tolerance of target,
+   each tagged with its source :amount so it can be removed from the correct bucket."
+  [lookup-map target-amount]
+  (->> lookup-map
+       (filter (fn [[amt _]] (<= (Math/abs (- (double amt) target-amount)) amount-tolerance)))
+       (mapcat (fn [[amt entries]] (map #(assoc % :amount amt) entries)))))
+
+(defn description-similar?
+  "True when descriptions are close enough to be the same merchant.
+   Always true when amounts are exactly equal (preserves prior exact-match behavior)."
+  [candidate-amount target-amount desc-a desc-b]
+  (or (== (double candidate-amount) (double target-amount))
+      (let [d       (fuzzy/levenshtein (str desc-a) (str desc-b))
+            longest (max 1 (count (str desc-a)) (count (str desc-b)))]
+        (<= (/ (double d) longest) description-similarity-max))))
+
 (defn check-amount
-  "keep the transaction if the amount is not found"
+  "keep the transaction if no candidate within amount-tolerance is found"
   [lookup-map transaction]
-  (if (->> transaction :amount double (contains? lookup-map))
+  (if (seq (candidates-within-tolerance lookup-map (-> transaction :amount double)))
     [:next lookup-map]
     [:keep lookup-map]))
 
@@ -42,27 +62,22 @@
   "discard the transaction if we have one on the same date"
   [lookup-map transaction]
   (let [amount (-> transaction :amount double)
-        _ (println "check-same-date: " (get lookup-map amount))
-        match (->> (get lookup-map amount)
+        match (->> (candidates-within-tolerance lookup-map amount)
                    (filter #(-> transaction :date date/unixtime->localtime
                                 (.isEqual (-> % :date date/unixtime->localtime))))
+                   (filter #(description-similar? (:amount %) amount (:description %) (:description transaction)))
                    (map #(assoc % :levenshtein (-> % :description (fuzzy/levenshtein (:description transaction)))))
                    (sort-by :levenshtein)
-                   ;;  (filter #(< (:levenshtein %) 10)) ; should compare the levenshtein in relation to the longest desc agains a threshold
                    first)]
-    ;; (println "check-same-date match: " match)
-    ;; (when (and (some? match) (-> match :levenshtein (> 0)))
-    ;;   (println (:description transaction)))
-    ;; (if (some? match)
-    ;;   [:discard (remove-match lookup-map amount match)]
-    ;;   [:next lookup-map])
     (cond
-      (and (some? match) (-> match :levenshtein (> 0)))
-      [:replace (remove-match lookup-map amount match) (select-keys match [:date :date-index :category-id])]
-      (some? match)
-      [:discard (remove-match lookup-map amount match)]
+      (nil? match)
+      [:next lookup-map]
+      ;; identical description AND identical amount → a true duplicate, drop it
+      (and (zero? (:levenshtein match)) (== (double (:amount match)) amount))
+      [:discard (remove-match lookup-map (:amount match) match)]
+      ;; otherwise (differing description and/or near amount) the bank version supersedes the db one
       :else
-      [:next lookup-map])))
+      [:replace (remove-match lookup-map (:amount match) match) (select-keys match [:date :date-index :category-id])])))
 
 (defn days-between [trans1 trans2]
   (let [time1 (-> trans1 :date date/unixtime->localtime)
@@ -73,16 +88,15 @@
   "keep or make this trans replace another if it match or not a close date"
   [lookup-map transaction]
   (let [amount (-> transaction :amount double)
-        match (->> (get lookup-map amount)
+        match (->> (candidates-within-tolerance lookup-map amount)
                    (filter #(let [days (days-between % transaction)]
                               (and (> days 0) (< days 8))))
+                   (filter #(description-similar? (:amount %) amount (:description %) (:description transaction)))
                    (map #(assoc % :levenshtein (-> % :description (fuzzy/levenshtein (:description transaction)))))
                    (sort-by :levenshtein)
-                  ;;  (filter #(< (:levenshtein %) 10)) ; should compare the levenshtein in relation to the longest desc agains a threshold
                    first)]
-    ;; (println "check-close-date: " match)
     (if (some? match)
-      [:replace (remove-match lookup-map amount match) (select-keys match [:date :date-index :category-id])]
+      [:replace (remove-match lookup-map (:amount match) match) (select-keys match [:date :date-index :category-id])]
       [:keep lookup-map])))
 
 (defn map-to-action [lookup-map transaction]
@@ -103,15 +117,17 @@
     ;; (println (:amount transaction) result " amount-found: " amount-found? " same-date: " same-date?)
     result))
 
-(defn map-to-actions [lookup-map transactions]
-  (if (-> transactions count (= 0))
-    '()
-    (let [trans (first transactions)
-          [action-key next-lookup-map db-match] (map-to-action lookup-map trans)
-          action (if (some? db-match)
-                   {:action action-key :db-match db-match}
-                   {:action action-key})]
-      (conj (map-to-actions next-lookup-map (rest transactions)) action))))
+(defn map-to-actions
+  "Returns {:actions [...] :lookup-map final} where actions matches transactions
+   positionally and lookup-map holds the db entries left unmatched."
+  [lookup-map transactions]
+  (reduce (fn [acc trans]
+            (let [[action-key next-map db-match] (map-to-action (:lookup-map acc) trans)
+                  action (cond-> {:action action-key}
+                           (some? db-match) (assoc :db-match db-match))]
+              {:actions (conj (:actions acc) action) :lookup-map next-map}))
+          {:actions [] :lookup-map lookup-map}
+          transactions))
 
 (defn add-data-to-replacement [transactions-in-db partial-transaction] 
   (let [have-same-db-id? (fn [t] (-> t :db-id (= (:db-id partial-transaction))))
@@ -160,29 +176,30 @@
 (defn process-transactions-from-bank [transactions-in-db transactions-from-bank]
   ;; (println  transactions-in-db)
   (let [lookup-map (->> transactions-in-db
-                        (map (juxt :amount #(select-keys % [:date :description :date-index :category-id])))
+                        (map (juxt :amount #(select-keys % [:date :description :date-index :category-id :user-id])))
                         (reduce (fn [acc [k v]] (let [list (get acc k)
                                                       v2 (assoc v :index (count list))]
                                                   (assoc acc k (conj list v2)))) {}))
-        ;; _ (println "lookup-map: " lookup-map)
-        ; list of actions matches transactions-from-bank
-        actions (map-to-actions lookup-map transactions-from-bank)
-        _ (println (into [] actions))
-        ;; _ (println transactions-from-bank)
+        ;; list of actions matches transactions-from-bank; leftover-map = unmatched db entries
+        {actions :actions leftover-map :lookup-map} (map-to-actions lookup-map transactions-from-bank)
         ;unchanged
         replacements (->> (map vector actions transactions-from-bank)
                           (filter (fn [[{action :action} _]] (= action :replace)))
-                          ;(map (fn [[{db-match :db-match} trans]] {:db-id db-id :source trans}))
-                          (map (fn [[{db-match :db-match} trans]] (add-data-to-replacement3 db-match trans)))
-                          ;(map #(add-data-to-replacement transactions-in-db %))
-                          )
+                          (map (fn [[{db-match :db-match} trans]] (add-data-to-replacement3 db-match trans))))
         new-trans (->> (map vector actions transactions-from-bank)
                        (filter (fn [[{action :action} _]] (= action :keep)))
-                       (map (fn [[_ trans]] trans))
-                    ;;    (map-indexed (fn [idx [_ trans]] [idx trans]))
-                    ;;    (map add-data-to-new)
-                       )]
-    [replacements new-trans]))
+                       (map (fn [[_ trans]] trans)))
+        ;; orphans: db transactions in the pulled window that no bank transaction accounts for
+        bank-dates (keep :date transactions-from-bank)
+        lo (when (seq bank-dates) (apply min bank-dates))
+        hi (when (seq bank-dates) (apply max bank-dates))
+        orphans (when (seq bank-dates)
+                  (->> (vals leftover-map)
+                       (apply concat)
+                       (filter #(<= lo (:date %) hi))
+                       (map #(select-keys % [:user-id :date :date-index]))
+                       vec))]
+    [replacements new-trans (vec orphans)]))
 
 (defn date->iso [iso-date]
   (-> iso-date

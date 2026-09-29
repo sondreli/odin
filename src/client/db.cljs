@@ -56,11 +56,30 @@
        :displayed-transactions-data {:display-option :table}
        :show-categorized-transactions? false
        :show-uncategorized-transactions? false
-       :treemap-target 100000
+       ;; Frontend-only visualization envelope for the budget target treemap.
+       ;; Not persisted; used to show unallocated remainder while editing targets.
+       :treemap-target nil
+       :treemap-show-targets? false
+       :treemap-show-filters? false
+       :transactions-search ""
+       :theme :light
        :active-menu :transaksjoner
        :reports []
        :tags []
        :accounts []
+       :selected-account-id nil
+       :investment-transactions []
+       :nordnet-import nil
+       :grocery-items []
+       :grocery-sync nil
+       :coop-login nil
+       :wealth-data nil
+       :wealth-loading? false
+       :wealth-selected-asset :total
+       :wealth-method :fifo
+       :leverage-settings {}
+       :prices-refreshing? false
+       :prices-auto-refreshed? false
        :selected-tag-id nil
        :reports-period {:start (date/first-day-of-month month-index year)
                         :end (date/first-day-of-next-month month-index year)

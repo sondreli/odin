@@ -162,8 +162,32 @@
 ;;                  (-> period-selector :a-month :year))
 ;;     (date/last-year-period)))
 
+(defn account-source-transactions
+  "Transactions for the account currently selected on the transactions page.
+   Bank accounts draw from :all-transactions, Nordnet/CSV accounts from
+   :investment-transactions. With no selection (or before accounts load),
+   falls back to all bank transactions.
+
+   Note: legacy bank transactions imported before per-account tagging have no
+   :account-id, so the bank branch also includes untagged rows — they all
+   belong to the user's bank account(s)."
+  [db]
+  (let [selected-id (:selected-account-id db)
+        account (some #(when (= selected-id (:account-id %)) %) (:accounts db))]
+    (cond
+      (nil? account)
+      (:all-transactions db)
+
+      (= "nordnet" (:provider account))
+      (filterv #(= selected-id (:account-id %)) (:investment-transactions db))
+
+      :else
+      (filterv #(let [aid (:account-id %)]
+                  (or (nil? aid) (= selected-id aid)))
+               (:all-transactions db)))))
+
 (defn apply-period [db period-selector period]
-  (let [period-transactions (->> (date/period-transactions (:all-transactions db) period)
+  (let [period-transactions (->> (date/period-transactions (account-source-transactions db) period)
                                  reverse
                                  (into []))
         categories (:categories db)
@@ -199,7 +223,7 @@
 (defn apply-period2 [db input-all-transactions input-period]
   (if (or (some? input-period)
           (some? input-all-transactions))
-    (let [all-transactions (if (some? input-all-transactions) input-all-transactions (:all-transactions db))
+    (let [all-transactions (if (some? input-all-transactions) input-all-transactions (account-source-transactions db))
           period (if (some? input-period) input-period (:period db))
           ;; time-unit (date/time-unit-from-period period)
           time-unit (period-type->time-unit period)

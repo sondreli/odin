@@ -13,6 +13,11 @@
    (:balance db)))
 
 (reg-sub
+ :bank-reauth
+ (fn [db _]
+   (:bank-reauth db)))
+
+(reg-sub
  :refreshing?
  (fn [db _]
    (:refreshing? db)))
@@ -103,6 +108,26 @@
    (:active-menu db)))
 
 (reg-sub
+ :theme
+ (fn [db _]
+   (or (:theme db) :light)))
+
+(reg-sub
+ :treemap-show-targets?
+ (fn [db _]
+   (boolean (:treemap-show-targets? db))))
+
+(reg-sub
+ :treemap-show-filters?
+ (fn [db _]
+   (boolean (:treemap-show-filters? db))))
+
+(reg-sub
+ :transactions-search
+ (fn [db _]
+   (or (:transactions-search db) "")))
+
+(reg-sub
  :reports
  (fn [db _]
    (:reports db)))
@@ -141,6 +166,66 @@
  :accounts
  (fn [db _]
    (:accounts db)))
+
+(reg-sub
+ :selected-account-id
+ (fn [db _]
+   (:selected-account-id db)))
+
+(reg-sub
+ :nordnet-import
+ (fn [db _]
+   (:nordnet-import db)))
+
+(reg-sub
+ :grocery-items
+ (fn [db _]
+   (:grocery-items db)))
+
+(reg-sub
+ :grocery-sync
+ (fn [db _]
+   (:grocery-sync db)))
+
+(reg-sub
+ :coop-login
+ (fn [db _]
+   (:coop-login db)))
+
+(reg-sub
+ :wealth-data
+ (fn [db _]
+   (:wealth-data db)))
+
+(reg-sub
+ :wealth-loading?
+ (fn [db _]
+   (:wealth-loading? db)))
+
+(reg-sub
+ :wealth-selected-asset
+ (fn [db _]
+   (:wealth-selected-asset db :total)))
+
+(reg-sub
+ :prices-refreshing?
+ (fn [db _]
+   (:prices-refreshing? db)))
+
+(reg-sub
+ :wealth-method
+ (fn [db _]
+   (:wealth-method db :fifo)))
+
+(reg-sub
+ :leverage-settings
+ (fn [db _]
+   (:leverage-settings db)))
+
+(reg-sub
+ :prices-updated-at
+ (fn [db _]
+   (get-in db [:wealth-data :prices-updated-at])))
 
 (reg-sub
  :multi-select

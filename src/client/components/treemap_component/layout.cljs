@@ -3,10 +3,42 @@
 
 (def excluded-ids #{"in" "out" "ukategorisert-in"})
 
+(def unallocated-id "ufordelt")
+
 (defn parse-target [t]
   (when t
     (let [n (if (number? t) t (js/parseFloat (str t)))]
       (when (and (number? n) (not (js/isNaN n)) (pos? n)) n))))
+
+(defn build-target-items
+  "Items sized by category :target for the budget-page treemap.
+
+   `total-target` is a frontend-only visualization envelope. When it is larger
+   than the allocated sum, an unallocated remainder item is appended so the
+   treemap fills that envelope. When it is smaller or unset, only allocated
+   targets are shown."
+  [categories total-target]
+  (let [allocated (->> categories
+                       (remove #(excluded-ids (:id %)))
+                       (keep (fn [c]
+                               (when-let [tgt (parse-target (:target c))]
+                                 {:id (:id c)
+                                  :name (:name c)
+                                  :color (or (:color c) "#9ca3af")
+                                  :value tgt})))
+                       vec)
+        allocated-sum (reduce + 0 (map :value allocated))
+        envelope (or (parse-target total-target) 0)
+        remainder (max 0 (- envelope allocated-sum))]
+    (->> (cond-> allocated
+           (pos? remainder)
+           (conj {:id unallocated-id
+                  :name "Ufordelt"
+                  :value remainder
+                  :unallocated? true}))
+         (filter #(pos? (:value %)))
+         (sort-by :value >)
+         vec)))
 
 (defn darken-color
   "Make a hex color darker by mixing with black."

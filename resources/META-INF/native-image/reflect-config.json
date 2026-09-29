@@ -1,0 +1,254 @@
+[
+  {
+    "name": "buddy.core.hash",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "buddy.core.mac",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "org.bouncycastle.jcajce.provider.symmetric.AES",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "org.bouncycastle.jcajce.provider.symmetric.AES$ECB",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "org.bouncycastle.jcajce.provider.digest.SHA256$Digest",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "org.bouncycastle.jce.provider.BouncyCastleProvider",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "sun.security.provider.NativePRNG",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "java.security.SecureRandom",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.DefaultDynamoDbClientBuilder",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.DefaultDynamoDbClient",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.core.client.builder.SdkDefaultClientBuilder",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.awscore.client.builder.AwsDefaultClientBuilder",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.QueryRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.QueryRequest$Builder",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.QueryResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.PutItemRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.PutItemResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.GetItemRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.GetItemResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.DeleteItemResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.UpdateItemResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.ScanRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.ScanResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.BatchGetItemRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.BatchGetItemResponse",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.AttributeValue",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.AttributeValue$Builder",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.WriteRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.WriteRequest$BuilderImpl",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.PutRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.DeleteRequest",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient$Builder",
+    "allDeclaredMethods": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "software.amazon.awssdk.regions.Region",
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true,
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "java.time.OffsetDateTime",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "java.time.ZonedDateTime",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "java.time.LocalDateTime",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "java.net.http.HttpClient",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "jdk.internal.net.http.HttpClientFacade",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "java.net.http.HttpResponse",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "jdk.internal.net.http.HttpResponseImpl",
+    "allDeclaredMethods": true
+  }
+]

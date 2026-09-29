@@ -1,0 +1,10 @@
+{
+  "resources": {
+    "includes": [
+      {"pattern": "software/amazon/awssdk/.*"},
+      {"pattern": "META-INF/services/.*"},
+      {"pattern": ".*\\.properties"},
+      {"pattern": ".*\\.edn"}
+    ]
+  }
+}

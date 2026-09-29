@@ -9,24 +9,39 @@
             [clojure.string :as s]))
 
 (defn highlight-text [text filter-text]
-  "Highlight the filter text in the description text"
-  (if (and (some? filter-text) 
-           (not= filter-text "")
-           (some? text)
-           (s/includes? (s/lower-case text) (s/lower-case filter-text)))
-    (let [lower-text (s/lower-case text)
+  "Highlight a substring inside `text`. Uses the .hl class from friendly.css.
+   When `filter-text` starts with the `regex:` prefix used by category-service/match-fun,
+   the body is treated as a regex (case-insensitive) and the first match is highlighted."
+  (cond
+    (or (nil? filter-text) (= filter-text "") (nil? text))
+    text
+
+    (and (>= (count filter-text) 6)
+         (= (subs filter-text 0 6) "regex:"))
+    (let [pattern (subs filter-text 6)
+          re (try (js/RegExp. pattern "i") (catch :default _ nil))
+          m  (when re (.match text re))]
+      (if (and m (> (.-length m) 0))
+        (let [match-text (aget m 0)
+              start-idx  (.-index m)
+              end-idx    (+ start-idx (count match-text))]
+          [:span
+           (subs text 0 start-idx)
+           [:mark.hl match-text]
+           (subs text end-idx)])
+        text))
+
+    (s/includes? (s/lower-case text) (s/lower-case filter-text))
+    (let [lower-text   (s/lower-case text)
           lower-filter (s/lower-case filter-text)
-          start-idx (.indexOf lower-text lower-filter)
-          end-idx (+ start-idx (count filter-text))
-          before-match (subs text 0 start-idx)
-          match-text (subs text start-idx end-idx)
-          after-match (subs text end-idx)]
+          start-idx    (.indexOf lower-text lower-filter)
+          end-idx      (+ start-idx (count filter-text))]
       [:span
-       before-match
-       [:span {:style {:background-color "yellow" ;:font-weight "bold"
-                       }} match-text]
-       after-match])
-    text))
+       (subs text 0 start-idx)
+       [:mark.hl (subs text start-idx end-idx)]
+       (subs text end-idx)])
+
+    :else text))
 
 (defn add-disabled [props expr?]
   (if expr?
@@ -127,15 +142,11 @@
 
 (defn- transaction-tag-editor [transaction-index transaction]
   (let [tags @(subscribe [:tags])
-        tag-map (into {} (map (juxt :id identity) tags))
         current-tag-ids (set (or (:tag-ids transaction) []))
         filter-tag-ids (set (or (:filter-tag-ids transaction) []))]
-    [:tr {:key "transaction-tag-editor"}
-     [:td {:col-span 6
-           :style {:padding "6px 8px" :background-color "#f8f9fa"
-                   :border-top "1px solid #eee"}}
-      [:div {:style {:display "flex" :align-items "center" :gap "6px" :flex-wrap "wrap"}}
-       [:span {:style {:font-size "11px" :color "#666" :font-weight "600"}} "Tags:"]
+    [:div {:style {:display "flex" :align-items "center" :gap "6px" :flex-wrap "wrap"
+                   :border-top "1px solid var(--border-soft)" :padding-top "8px"}}
+       [:span {:style {:font-size "11px" :color "var(--text-dim)" :font-weight "600"}} "Tags:"]
        (doall
         (for [tag tags]
           (let [selected? (contains? current-tag-ids (:id tag))
@@ -154,7 +165,9 @@
                       :style {:width "11px" :height "11px" :margin 0}}]
              (:name tag)
              (when from-filter?
-               [:span {:style {:font-size "9px" :color "#888" :margin-left "2px"}} "(F)"])])))]]]))
+               [:span {:style {:font-size "9px" :color "#888" :margin-left "2px"}} "(F)"])])))]))
+
+(declare filter-builder-inline)
 
 (defn build-transaction-row-editor [transaction transaction-row-editor category-map]
   (let [category-id (:category-id transaction)
@@ -187,25 +200,27 @@
                                    (not all-matches-same-category?))
         row-index (:row-index transaction-row-editor)]
     [[:tr {:key "transaction-row-editor"}
-      [:td {:col-span 6 :style {:padding "6px 8px" :background-color "#f8f9fa"}}
-       [:div {:style {:display "flex" :align-items "center" :gap "8px"}}
-        [:button (-> {:class "buttom-class"
-                      :style {:opacity (if store-button-disabled? "0.5" "1")
-                              :cursor (if store-button-disabled? "not-allowed" "pointer")}
-                      :on-click #(dispatch [:update-transactions-step-one category transaction])}
-                     (add-disabled store-button-disabled?)) "Lagre"]
-        [:div {:style {:width "12px" :height "12px" :border-radius "2px"
-                       :background-color (or (and category (:color category)) "#e9ecef")}}]
-        (build-category-select category category-map)
-        [:input filter-input-html]
-        [:span {:style {:font-size "12px" :color "#666" :white-space "nowrap"}}
-         (if (some? category)
-           (if filter-has-value?
-             "marked by filter"
-             "marked manually")
-           "")]]]]
-     (transaction-tag-editor row-index transaction)
-     (filter-statistics-component filter-stats show-categorized? show-uncategorized? category-map)]))
+      [:td {:col-span 6 :style {:padding "6px 8px"}}
+       [:div.txn-edit-panel
+        [:div {:style {:display "flex" :align-items "center" :gap "8px"}}
+         [:button (-> {:class "buttom-class"
+                       :style {:opacity (if store-button-disabled? "0.5" "1")
+                               :cursor (if store-button-disabled? "not-allowed" "pointer")}
+                       :on-click #(dispatch [:update-transactions-step-one category transaction])}
+                      (add-disabled store-button-disabled?)) "Lagre"]
+         [:div {:style {:width "12px" :height "12px" :border-radius "2px"
+                        :background-color (or (and category (:color category)) "#e9ecef")}}]
+         (build-category-select category category-map)
+         [:input filter-input-html]
+         [:span {:style {:font-size "12px" :color "#666" :white-space "nowrap"}}
+          (if (some? category)
+            (if filter-has-value?
+              "marked by filter"
+              "marked manually")
+            "")]]
+        (transaction-tag-editor row-index transaction)
+        (when (some? category)
+          [filter-builder-inline transaction-row-editor transaction category-map])]]]]))
 
 (defn- transaction-tag-dots [transaction tag-map]
   (let [tag-ids (or (:tag-ids transaction) [])]
@@ -239,25 +254,30 @@
                                "ukategorisert-in"))
         hovered-fade? (and (some? hovered-cat)
                            (not= hovered-cat effective-cat-id))
-        transaction-row-html [:tr {:key index :data-amount (:amount transaction)
+        amt (:amount transaction)
+        search @(subscribe [:transactions-search])
+        transaction-row-html [:tr {:key index :data-amount amt
+                                   :class (str "txn-row"
+                                               (when is-selected? " is-selected"))
                                    :style (merge
                                            (when (and any-editing? (not is-editing?))
                                              {:opacity "0.4"})
                                            (when hovered-fade?
-                                             {:opacity "0.4" :transition "opacity 0.15s ease"})
-                                           (when is-selected?
-                                             {:background-color "#e8f0fe"}))}
+                                             {:opacity "0.4" :transition "opacity 0.15s ease"}))}
                               [:td (if multi-select-mode?
                                      [:input {:type "checkbox" :checked is-selected?
                                               :on-change #(dispatch [:toggle-multi-select-row index])
                                               :style {:cursor "pointer"}}]
-                                     [:a {:class "cursor-pointer" :on-click #(dispatch [:edit-transaction-row index])} (if is-editing? "Lukk" "Endre")])]
-                              [:td {:style {:width "20px" :min-width "20px" :padding 0 :background-color color}}]
-                              [:td {:align "right" :style {:padding-right "1em"}}
-                               (->> transaction :amount (gstring/format "%.2f"))]
-                              [:td {:align "right" :style {:padding-right "1em"}}
+                                     [:a {:class "cursor-pointer sb-edit"
+                                          :on-click #(dispatch [:edit-transaction-row index])}
+                                      (if is-editing? "Lukk" "Endre")])]
+                              [:td.txn-cat-cell
+                               [:span.cat-swatch.lg {:style {:background-color color}}]]
+                              [:td {:class (str "txn-amount" (when (pos? amt) " pos"))}
+                               (gstring/format "%.2f" amt)]
+                              [:td.txn-date
                                (-> transaction :date (date/unixtime->prettydate))]
-                              [:td (if is-editing?
+                              [:td.txn-desc (if is-editing?
                                      (let [new-sub-filter (-> transaction-row-editor :new-sub-filter)
                                            category-id (:category-id transaction)
                                            category (get category-map category-id)
@@ -281,7 +301,7 @@
                                           (highlight-text (:description transaction) filter-to-highlight)
                                           (:description transaction))])
                                      [:span
-                                      (:description transaction)
+                                      (highlight-text (:description transaction) search)
                                       [transaction-tag-dots transaction tag-map]])]
                               (if (and (:category-id transaction) (:marked-by-filter? transaction))
                                 [:td [:a {:class "cursor-pointer" :on-click #(dispatch [:view-transaction-match transaction])} "View"]]
@@ -338,7 +358,8 @@
           "Lagre tags"]])))
 
 (defn- sidebar-category-row-inner [_cat _builder-category _editing-txn _editing-filter-index]
-  (let [expanded-tag-index (r/atom nil)]
+  (let [expanded-tag-index (r/atom nil)
+        scrolled-for (r/atom nil)]
     (fn [cat builder-category editing-txn editing-filter-index]
       (let [is-editing? (= (:id cat) (:id builder-category))
             desc        (when editing-txn (:description editing-txn))
@@ -347,28 +368,38 @@
             has-match?  (and editing-txn (seq matching-lines))
             tags @(subscribe [:tags])
             tag-map (into {} (map (juxt :id identity) tags))
-            filters (or (:filters builder-category) (:filters cat) [])]
+            filters (or (:filters builder-category) (:filters cat) [])
+            period-txns @(subscribe [:period-transactions])
+            cat-count (count (filter #(= (:id cat) (:category-id %)) period-txns))]
         [:<>
          [:tr {:key (:id cat)
-               :style (merge {}
-                              (when has-match?
-                                {:outline "2px solid #f59e0b" :outline-offset "-2px"}))}
-          [:td [:a {:class "cursor-pointer"
-                    :on-click #(do (reset! expanded-tag-index nil)
-                                   (dispatch [:edit-sidebar-category (:id cat)]))}
-                (if is-editing? "Lukk" "Endre")]]
-          [:td {:style {:background-color (:color cat) :padding "2px 6px" :cursor "pointer"}
+               :class (str "txn-row" (when has-match? " has-match"))
+               :style (when has-match?
+                        {:outline "2px solid var(--c-accent)"
+                         :outline-offset "-2px"
+                         :border-radius "8px"})}
+          [:td {:style {:width "44px"}}
+           [:button.sb-edit
+            {:on-click #(do (reset! expanded-tag-index nil)
+                            (dispatch [:edit-sidebar-category (:id cat)]))}
+            (if is-editing? "Lukk" "Endre")]]
+          [:td {:style {:cursor "pointer"}
                 :on-click #(dispatch [:view-category (:name cat)])}
-           (:name cat)]]
+           [:span.sb-name
+            [:span.cat-swatch {:style {:background-color (:color cat)}}]
+            [:span (:name cat)]]]
+          [:td {:style {:text-align "right" :width "40px"}}
+           [:span.sb-count cat-count]]]
          (when is-editing?
            [:tr {:key (str (:id cat) "-editor")}
-            [:td {:col-span 2 :style {:padding "4px" :background-color "#f8f9fa"
-                                       :border-left (str "3px solid " (or (:color cat) "#ccc"))}}
-             (let [lines (vec (or (-> builder-category :marker :description) []))]
-               [:div {:style {:display "flex" :flex-direction "column" :gap "2px"}}
-                [:span {:style {:font-size "10px" :font-weight "bold" :color "#888"
-                                :text-transform "uppercase" :letter-spacing "0.5px"
-                                :margin-bottom "2px"}} "Filtre"]
+            [:td {:col-span 3 :style {:padding 0}}
+             (let [lines (vec (or (-> builder-category :marker :description) []))
+                   edit-key (when editing-txn
+                              [(:date editing-txn) (:description editing-txn) (:id cat)])]
+               [:div {:class (str "sb-edit-panel" (when has-match? " has-match"))}
+                [:div {:style {:font-size "11px" :font-weight "700"
+                               :color "var(--text-dim)" :margin-bottom "2px"}}
+                 "Filtre"]
                 (doall
                  (for [[i line] (map-indexed vector lines)]
                    (let [line-matches? (and desc (seq line) (category/match-fun desc line))
@@ -377,48 +408,67 @@
                          filter-tag-ids (or (:tag-ids filter-obj) [])
                          tag-expanded? (= @expanded-tag-index i)]
                      ^{:key i}
-                     [:div {:style {:display "flex" :flex-direction "column"}}
-                      [:div {:style {:display "flex" :align-items "center" :gap "2px"}}
-                       [:input {:type "text"
-                                :value line
-                                :data-filter-index i
-                                :on-change #(dispatch [:update-filter-line i (-> % .-target .-value)])
-                                :on-key-down (fn [e]
-                                               (when (= (.-key e) "Enter")
-                                                 (.preventDefault e)
-                                                 (let [container (-> (.-target e) (.closest "td"))]
-                                                   (dispatch [:add-filter-line])
-                                                   (js/setTimeout
-                                                    (fn []
-                                                      (when container
-                                                        (let [inputs (.querySelectorAll container "input[data-filter-index]")
-                                                              last-input (aget inputs (dec (.-length inputs)))]
-                                                          (when last-input (.focus last-input)))))
-                                                    50))))
-                                :style (merge {:flex "1" :padding "2px 4px"
-                                               :font-size "12px" :border-radius "3px"
-                                               :box-sizing "border-box"
-                                               :border "1px solid #ccc"}
-                                              (when line-matches?
-                                                {:background-color "#fef3c7"})
-                                              (when is-active?
-                                                {:border-color "#f59e0b"
-                                                 :outline "1px solid #f59e0b"}))}]
-                       [:a {:class "cursor-pointer"
-                            :style {:font-size "11px" :padding "0 2px"
-                                    :color (if tag-expanded? "#2563eb" "#666")}
-                            :on-click #(swap! expanded-tag-index
-                                              (fn [cur] (if (= cur i) nil i)))}
+                     [:div {:style {:display "flex" :flex-direction "column" :gap "4px"}}
+                      [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
+                       [:input.sb-filter-input
+                        {:type "text"
+                         :value line
+                         :data-filter-index i
+                         :ref (when line-matches?
+                                (fn [el]
+                                  (when (and el (not= @scrolled-for edit-key))
+                                    (reset! scrolled-for edit-key)
+                                    (js/setTimeout
+                                     (fn []
+                                       ;; Scroll ONLY the sidebar's internal
+                                       ;; overflow, never the page. scrollIntoView
+                                       ;; walks up and scrolls every scrollable
+                                       ;; ancestor, which would shift the
+                                       ;; transactions table — so do it manually.
+                                       (when-let [panel (.closest el ".sidebar-panel")]
+                                         (let [er (.getBoundingClientRect el)
+                                               pr (.getBoundingClientRect panel)
+                                               rel-top (- (.-top er) (.-top pr))
+                                               target (+ (.-scrollTop panel)
+                                                         rel-top
+                                                         (- (/ (.-clientHeight panel) 2))
+                                                         (/ (.-height er) 2))]
+                                           (.scrollTo panel
+                                            #js {:top target :behavior "smooth"}))))
+                                     0))))
+                         :on-change #(dispatch [:update-filter-line i (-> % .-target .-value)])
+                         :on-key-down (fn [e]
+                                        (when (= (.-key e) "Enter")
+                                          (.preventDefault e)
+                                          (let [container (-> (.-target e) (.closest "td"))]
+                                            (dispatch [:add-filter-line])
+                                            (js/setTimeout
+                                             (fn []
+                                               (when container
+                                                 (let [inputs (.querySelectorAll container "input[data-filter-index]")
+                                                       last-input (aget inputs (dec (.-length inputs)))]
+                                                   (when last-input (.focus last-input)))))
+                                             50))))
+                         :style (merge {:flex "1"}
+                                       (when line-matches?
+                                         {:background-color "var(--highlight)"})
+                                       (when is-active?
+                                         {:border-color "var(--c-accent)"
+                                          :outline "1px solid var(--c-accent)"}))}]
+                       [:button.sb-edit
+                        {:style (merge {:min-width "auto"}
+                                       (when tag-expanded? {:color "var(--c-accent)"}))
+                         :on-click #(swap! expanded-tag-index
+                                           (fn [cur] (if (= cur i) nil i)))}
                         (str "T" (when (seq filter-tag-ids)
                                    (str "(" (count filter-tag-ids) ")")))]
-                       [:a {:class "cursor-pointer"
-                            :style {:color "#c00" :font-size "14px" :line-height "1"
-                                    :padding "0 2px"}
-                            :on-click #(dispatch [:remove-filter-line i])}
+                       [:button.sb-edit
+                        {:style {:color "var(--c-down)" :min-width "auto"}
+                         :on-click #(dispatch [:remove-filter-line i])}
                         "×"]]
                       (when (seq filter-tag-ids)
-                        [:div {:style {:display "flex" :flex-wrap "wrap" :gap "1px"
-                                       :padding-left "4px" :margin-top "1px"}}
+                        [:div {:style {:display "flex" :flex-wrap "wrap" :gap "2px"
+                                       :padding-left "4px"}}
                          (doall
                           (for [tid filter-tag-ids]
                             (when-let [tag (get tag-map tid)]
@@ -426,21 +476,20 @@
                               [tag-chip tag nil])))])
                       (when tag-expanded?
                         [filter-tag-section i filter-obj tags expanded-tag-index])])))
-                [:button {:on-click #(dispatch [:add-filter-line])
-                          :style {:align-self "flex-start" :padding "1px 8px"
-                                  :font-size "11px" :cursor "pointer"
-                                  :margin-top "2px"}}
-                 "+"]
-                [:div {:style {:border-top "1px solid #ddd" :margin-top "6px" :padding-top "6px"
-                              :display "flex" :justify-content "space-between"
-                              :align-items "center"}}
-                 [:button {:on-click #(dispatch [:store-category3])
-                           :style {:padding "2px 10px" :font-size "12px" :cursor "pointer"}}
+                [:button.sb-add
+                 {:on-click #(dispatch [:add-filter-line])}
+                 "+ Legg til filter"]
+                [:div {:style {:border-top "1px solid var(--border-soft)"
+                               :padding-top "8px"
+                               :display "flex" :justify-content "space-between"
+                               :align-items "center"}}
+                 [:button.btn-primary-xs
+                  {:on-click #(dispatch [:store-category3])}
                   "Lagre"]
-                 [:a {:class "cursor-pointer"
-                      :style {:font-size "11px" :color "#c00"}
-                      :on-click #(when (js/confirm (str "Slett kategori \"" (:name cat) "\"?"))
-                                   (dispatch [:delete-category (:id cat)]))}
+                 [:button.sb-edit
+                  {:style {:color "var(--c-down)"}
+                   :on-click #(when (js/confirm (str "Slett kategori \"" (:name cat) "\"?"))
+                                (dispatch [:delete-category (:id cat)]))}
                   "Slett"]]])]])]))))
 
 (defn- sidebar-category-row [& args]
@@ -458,9 +507,11 @@
    (doall
     (for [[i c] (map-indexed vector palette-colors)]
       ^{:key i}
-      [:div {:style {:width "22px" :height "22px" :border-radius "3px"
+      [:div {:style {:width "22px" :height "22px" :border-radius "5px"
                      :background-color c :cursor "pointer"
-                     :border (if (= c selected-color) "2px solid #333" "2px solid transparent")
+                     :border (if (= c selected-color)
+                               "2px solid var(--text-bright)"
+                               "2px solid transparent")
                      :box-sizing "border-box"
                      :display "flex" :align-items "center" :justify-content "center"}
              :on-click #(on-change c)}
@@ -472,28 +523,24 @@
   (let [is-editing? (= "new-id" (str (:id builder-category)))]
     [:<>
      [:tr {:key "new-cat-btn"}
-      [:td {:col-span 2}
-       [:a {:class "cursor-pointer"
-            :style {:font-size "12px" :color "#333"}
-            :on-click #(dispatch [:edit-sidebar-category "new-id"])}
+      [:td {:col-span 3 :style {:padding-top "8px"}}
+       [:button.sb-add
+        {:on-click #(dispatch [:edit-sidebar-category "new-id"])}
         (if is-editing? "Avbryt" "+ Ny kategori")]]]
      (when is-editing?
        [:tr {:key "new-cat-editor"}
-        [:td {:col-span 2 :style {:padding "4px" :background-color "#f8f9fa"}}
-         [:div {:style {:display "flex" :flex-direction "column" :gap "4px"}}
-          [:input {:type "text" :placeholder "Navn"
-                   :value (:name builder-category)
-                   :on-change #(dispatch [:update-builder-category-name (-> % .-target .-value)])
-                   :style {:padding "4px 6px" :font-size "12px"
-                           :border "1px solid #ccc" :border-radius "3px"}}]
+        [:td {:col-span 3 :style {:padding 0}}
+         [:div.sb-edit-panel
+          [:input.sb-filter-input
+           {:type "text" :placeholder "Navn"
+            :value (:name builder-category)
+            :on-change #(dispatch [:update-builder-category-name (-> % .-target .-value)])}]
           [color-palette
            (or (:color builder-category) "#5ce67e")
            #(dispatch [:update-builder-category-color %])
            used-colors]
-          [:button {:on-click #(dispatch [:store-category3])
-                    :style {:padding "4px 10px" :font-size "12px" :cursor "pointer"
-                            :background-color "#333" :color "#fff"
-                            :border "none" :border-radius "4px"}}
+          [:button.btn-primary-xs
+           {:on-click #(dispatch [:store-category3])}
            "Lagre"]]]])]))
 
 (defn- tags-sidebar [categories]
@@ -506,7 +553,7 @@
             selected-tag-id @(subscribe [:selected-tag-id])
             cats (->> categories (filter :name))]
         [:div {:style {:margin-top "16px"}}
-         [:h4 {:style {:margin "0 0 6px 0"}} "Tags"]
+         [:div.sidebar-title "Tags" [:span.count (count tags)]]
          [:table {:style {:width "100%"}}
           [:tbody
            (doall
@@ -589,16 +636,13 @@
                     "Lagre"]]]])])]]]))))
 
 
-(defn- categories-sidebar [categories editing-txn editing-filter-index]
+(defn categories-sidebar [categories editing-txn editing-filter-index]
   (let [builder-category @(subscribe [:builder-category])
         cats (->> categories (filter :name))]
-    [:div {:style {:width "250px" :min-width "250px"
-                   :position "sticky" :top "20vh"
-                   :align-self "flex-start"
-                   :max-height "80vh" :overflow-y "auto"
-                   :border-left "1px solid #ddd" :padding-left "8px"
-                   :font-size "13px"}}
-     [:h4 {:style {:margin "0 0 6px 0"}} "Kategorier"]
+    [:div
+     [:div.sidebar-title
+      "Kategorier"
+      [:span.count (count cats)]]
      [:table {:style {:width "100%"}}
       [:tbody
        (doall
@@ -657,7 +701,7 @@
         tag-ids (or new-tag-ids #{})]
     (when (pos? selected-count)
       [:tr {:key "multi-select-editor"}
-       [:td {:col-span 6 :style {:padding "8px" :background-color "#f8f9fa" :border-top "2px solid #dee2e6"}}
+       [:td.multi-select-bar {:col-span 6 :style {:padding "10px 14px"}}
         (if-not editing?
           [:div {:style {:display "flex" :align-items "center" :gap "8px"}}
            [:span {:style {:font-weight "600" :font-size "12px"}}
@@ -723,6 +767,223 @@
                       :style {:padding "4px 12px" :font-size "12px" :cursor "pointer"
                               :border "1px solid #ccc" :border-radius "4px" :background-color "white"}}
              "Avbryt"]]])]])))
+
+(defn transactions-sidebar
+  "Right-hand categories+tags sidebar. Subscribes to the editing state and
+   renders the existing categories-sidebar inside a .sidebar-panel wrapper."
+  [categories]
+  (let [transaction-row-editor @(subscribe [:transaction-row-editor])
+        editing-txn (when-let [idx (:row-index transaction-row-editor)]
+                      (some-> @(subscribe [:displayed-transactions-data])
+                              :displayed-transactions
+                              (get idx)))
+        editing-filter-index (:editing-filter-index transaction-row-editor)]
+    [categories-sidebar categories editing-txn editing-filter-index]))
+
+;; --- Inline filter builder (programming-by-example) -------------------------
+;; Rendered directly under the row being edited. One merged table of the
+;; transactions the current filter matches (uncategorized + categorized). Mark a
+;; row "Utelat" to exclude it and the pattern re-synthesizes to avoid it.
+
+(defn- distinct-by [f coll]
+  (second
+   (reduce (fn [[seen acc] x]
+             (let [k (f x)]
+               (if (contains? seen k) [seen acc] [(conj seen k) (conj acc x)])))
+           [#{} []]
+           coll)))
+
+(defn- fb-status [matched? polarity]
+  (cond
+    (= polarity :negative) [:span {:style {:color "var(--c-down)" :font-weight "600"}} "utelatt"]
+    matched?               [:span {:style {:color "var(--c-up)" :font-weight "600"}} "matcher"]
+    (= polarity :positive) [:span {:style {:color "var(--c-accent)" :font-weight "600"}} "valgt"]
+    :else                  [:span {:style {:color "var(--text-faint)"}} "—"]))
+
+(defn- fb-toggle-btn [label active? color on-click]
+  [:button {:class "fb-btn"
+            :style (if active?
+                     {:background color :color "white" :border-color color}
+                     {:color color})
+            :on-click on-click}
+   label])
+
+(defn- fb-row [txn pattern category-map base-key]
+  (let [tx-k (category/tx-key txn)
+        polarity (:fb-polarity txn)
+        negative? (= polarity :negative)
+        positive? (= polarity :positive)
+        amt (:amount txn)
+        matched? (and (not negative?)
+                      (some? (:description txn))
+                      (not= pattern "")
+                      (category/match-fun (:description txn) pattern))
+        base? (= tx-k base-key)
+        cat (get category-map (:category-id txn))
+        cat-filter (when (and cat (:marked-by-filter? txn)) (category/find-sub-filter cat txn))]
+    [:tr {:key (str tx-k) :class "txn-row" :style (when negative? {:opacity "0.5"})}
+     [:td.txn-cat-cell
+      [:span.cat-swatch {:title (:name cat)
+                         :style {:background-color (or (:color cat) "var(--border-strong)")}}]]
+     [:td {:class (str "txn-amount" (when (pos? amt) " pos"))}
+      (gstring/format "%.2f" amt)]
+     [:td.txn-date (date/unixtime->prettydate (:date txn))]
+     [:td.txn-desc {:style (when negative? {:text-decoration "line-through"})}
+      (highlight-text (:description txn) pattern)]
+     [:td {:style {:color "var(--text-dim)"}} (or (:name cat) "—")]
+     [:td {:style {:font-style "italic" :color "var(--text-dim)"}} (or cat-filter "")]
+     [:td (fb-status matched? polarity)]
+     [:td
+      (if base?
+        [:span {:style {:color "var(--text-dim)"}} "redigeres"]
+        [:span {:style {:display "inline-flex" :gap "4px"}}
+         (fb-toggle-btn "Match" positive? "var(--c-up)"
+                        #(dispatch [:fb-set-example tx-k (if positive? :neutral :positive)]))
+         (fb-toggle-btn "Utelat" negative? "var(--c-down)"
+                        #(dispatch [:fb-set-example tx-k (if negative? :neutral :negative)]))])]]))
+
+(def ^:private fb-row-limit 150)
+
+(defn filter-builder-inline [transaction-row-editor base-transaction category-map]
+  (let [all @(subscribe [:all-transactions])
+        stats (:filter-statistics transaction-row-editor)
+        positives (or (:fb-positives transaction-row-editor) #{})
+        negatives (or (:fb-negatives transaction-row-editor) #{})
+        pattern (or (:new-sub-filter transaction-row-editor) "")
+        regex? (and (>= (count pattern) 6) (= (subs pattern 0 6) "regex:"))
+        ;; Plain filters of length < 2 match almost everything; don't evaluate them.
+        too-short? (and (not= pattern "") (not regex?) (< (count pattern) 2))
+        base-key (category/tx-key base-transaction)
+        matched (concat (:uncategorized-transactions stats) (:categorized-transactions stats))
+        ;; Look up only the explicitly-chosen transactions (small sets) rather than
+        ;; building a full key->txn map over every transaction on each render.
+        chosen (into positives negatives)
+        chosen-txns (when (seq chosen)
+                      (filterv #(contains? chosen (category/tx-key %)) all))
+        polarity-of (fn [k] (cond (contains? negatives k) :negative
+                                  (contains? positives k) :positive
+                                  :else :neutral))
+        rows (->> (concat matched chosen-txns)
+                  (distinct-by category/tx-key)
+                  (map #(assoc % :fb-polarity (polarity-of (category/tx-key %))))
+                  (sort-by (juxt #(if (nil? (:category-id %)) 0 1) #(- (:date %)))))
+        row-count (count rows)
+        unc-count (:uncategorized stats 0)
+        cat-count (:categorized stats 0)
+        same-count (:same-category stats 0)
+        conflict-count (max 0 (- cat-count same-count))
+        empty-pattern? (= pattern "")
+        fb-msg (:fb-msg transaction-row-editor)
+        matches? (fn [t] (and (some? (:description t))
+                              (category/match-fun (:description t) pattern)))
+        ;; The pattern is stale when it no longer agrees with the selection: a
+        ;; negative still matches, or a positive no longer matches.
+        dirty? (boolean
+                (and (not empty-pattern?)
+                     (or (some matches? (filter #(= :negative (:fb-polarity %)) rows))
+                         (some #(not (matches? %)) (filter #(= :positive (:fb-polarity %)) rows)))))]
+    [:div {:class "fb-panel"
+           :style {:border-top "1px solid var(--border-soft)" :padding-top "8px"
+                   :font-size "var(--fs-sm)"}}
+     [:div {:style {:display "flex" :align-items "center" :gap "10px" :flex-wrap "wrap"
+                    :margin-bottom "8px"}}
+      [:span {:style {:font-size "var(--fs-xs)" :padding "2px 8px" :border-radius "999px"
+                      :background "var(--bg-3)" :color "var(--text-dim)"}}
+       (if regex? "regex" "tekst")]
+      [:button {:class (if dirty? "btn-primary-xs" "fb-btn")
+                :on-click #(dispatch [:fb-suggest])}
+       "Foreslå filter"]
+      [:span {:style {:color "var(--text-dim)"}}
+       (str "Treff: " (count matched) " · ukategorisert " unc-count)
+       (when (pos? conflict-count)
+         [:span {:style {:color "var(--c-down)"}} (str " · " conflict-count " i andre kategorier")])]
+      (when dirty?
+        [:span {:style {:color "var(--c-accent)" :font-weight "600"}}
+         "Utvalget er endret – klikk «Foreslå filter» for å oppdatere."])
+      (when (and fb-msg (not dirty?))
+        [:span {:style {:color "var(--c-warn)"}} fb-msg])]
+     (cond
+       empty-pattern?
+       [:p.dim.small {:style {:margin 0}}
+        "Skriv et filter over (eller bruk «Foreslå filter») for å se hvilke transaksjoner som matcher."]
+
+       too-short?
+       [:p.dim.small {:style {:margin 0}} "Filteret må være minst 2 tegn."]
+
+       (empty? rows)
+       [:p.dim.small {:style {:margin 0}} "Ingen transaksjoner matcher dette filteret."]
+
+       :else
+       [:div
+        [:table.txn-table
+         [:thead
+          [:tr
+           [:th {:style {:width "24px"}} ""]
+           [:th {:style {:text-align "right"}} "Beløp"]
+           [:th {:style {:text-align "right"}} "Dato"]
+           [:th "Beskrivelse"]
+           [:th "Kategori"]
+           [:th "Filter"]
+           [:th "Status"]
+           [:th "Velg"]]]
+         [:tbody
+          (doall (for [txn (take fb-row-limit rows)]
+                   (fb-row txn pattern category-map base-key)))]]
+        (when (> row-count fb-row-limit)
+          [:p.dim.small {:style {:margin "6px 0 0 0"}}
+           (str "Viser " fb-row-limit " av " row-count " – avgrens filteret for å se færre.")])])]))
+
+(defn transactions-table-main
+  "Just the transactions table (no sidebar). Mirrors transactions-table's body."
+  [displayed-transactions-data categories]
+  (let [builder-category @(subscribe [:builder-category])
+        transaction-row-editor @(subscribe [:transaction-row-editor])
+        multi-select @(subscribe [:multi-select])
+        multi-select-mode? (some? multi-select)
+        all-transactions (:displayed-transactions displayed-transactions-data)
+        sort-column (-> displayed-transactions-data :sort-column)
+        sort-order (-> displayed-transactions-data :sort-order)
+        category-map (into {} (map (juxt :id #(identity %)) categories))
+        search @(subscribe [:transactions-search])
+        search-q (when (and search (not= "" search)) (s/lower-case search))
+        ;; Filter view-level by description or category name substring.
+        transactions (if search-q
+                       (filterv (fn [tx]
+                                  (let [d (some-> (:description tx) s/lower-case)
+                                        cat-name (some-> (get category-map (:category-id tx)) :name s/lower-case)]
+                                    (or (and d (s/includes? d search-q))
+                                        (and cat-name (s/includes? cat-name search-q)))))
+                                all-transactions)
+                       all-transactions)
+        indexed-transactions (map-indexed vector transactions)
+        rows (mapcat (fn [[index transaction]]
+                       (transaction-row index transaction builder-category transaction-row-editor category-map multi-select))
+                     indexed-transactions)]
+    [:div {:style {:overflow-x "auto"}
+           :on-mouse-down #(reset! selection-sum-state nil)
+           :on-mouse-up (fn [_]
+                          (js/setTimeout
+                           (fn [] (reset! selection-sum-state (compute-selection-sum)))
+                           10))}
+     [:table.txn-table
+      [:thead
+       [:tr
+        [:th {:style {:cursor "pointer" :font-size "11px"}
+              :on-click #(dispatch [:toggle-multi-select-mode])}
+         (if multi-select-mode? "Avbryt" "Velg")]
+        [:th {:style {:width "12px" :min-width "12px" :padding 0}}]
+        [:th {:style {:cursor "pointer" :text-align "right"} :on-click #(dispatch [:sort-column :amount])}
+         "Beløp " (add-sort-sigil :amount sort-column sort-order)]
+        [:th {:style {:cursor "pointer" :text-align "right"} :on-click #(dispatch [:sort-column :date])}
+         "Dato " (add-sort-sigil :date sort-column sort-order)]
+        [:th {:style {:cursor "pointer" :text-align "left"} :on-click #(dispatch [:sort-column :description])}
+         "Beskrivelse " (add-sort-sigil :description sort-column sort-order)]
+        [:th ""]]]
+      [:tbody {:id "transactions-tbody"}
+       (when multi-select-mode?
+         (multi-select-editor multi-select (vec transactions) category-map categories))
+       rows]]
+     [selection-sum-popup @selection-sum-state]]))
 
 (defn transactions-table [displayed-transactions-data categories]
   (let [builder-category @(subscribe [:builder-category])
