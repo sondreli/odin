@@ -1037,6 +1037,152 @@ tr.txn-row > td {
 }
 
 /* ============================================================
+   Budget summary bar (treemap view)
+   ============================================================ */
+
+/* Summary line above bar */
+.budget-summary-line {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  text-align: center;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.budget-summary-spent,
+.budget-summary-target {
+  font-weight: 600;
+}
+.budget-summary-sep {
+  color: var(--text-faint);
+  margin: 0 2px;
+}
+.budget-summary-over {
+  font-weight: 600;
+  color: var(--c-down);
+}
+.budget-summary-remaining {
+  font-weight: 600;
+  color: var(--c-up);
+}
+
+/* Budget bar container */
+.budget-bar-container {
+  margin-top: 12px;
+}
+
+/* Labels above bar */
+.budget-bar-labels-above {
+  position: relative;
+  height: 20px;
+  margin-bottom: 2px;
+}
+.budget-bar-labels-below {
+  position: relative;
+  height: 20px;
+}
+
+/* Bar segments */
+.budget-bar-segments {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.budget-bar-seg {
+  transition: flex 0.2s ease;
+}
+
+/* Spent segment: matches treemap category color treatment */
+.budget-bar-seg-spent {
+  background-color: var(--text-dim);
+}
+
+/* Overuse segment: diagonal stripes instead of solid red */
+.budget-bar-seg-overuse {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--c-down),
+    var(--c-down) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  background-color: var(--c-down);
+}
+
+/* Uncategorized segment: grey with subtle pattern */
+.budget-bar-seg-uncategorized {
+  background-color: var(--text-faint);
+}
+
+/* Remaining segment: light shade */
+.budget-bar-seg-remaining {
+  background-color: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 0 5px 5px 0;
+  margin: -1px 0;
+}
+
+/* Labels */
+.budget-label {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.budget-label-name {
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+.budget-label-amount {
+  font-weight: 600;
+}
+
+/* Label color variations */
+.budget-label-spent .budget-label-amount {
+  color: var(--text);
+}
+.budget-label-overuse .budget-label-amount {
+  color: var(--c-down);
+}
+.budget-label-uncategorized .budget-label-amount {
+  color: var(--text-dim);
+}
+.budget-label-remaining .budget-label-amount {
+  color: var(--c-up);
+}
+
+/* Equation row at bottom */
+.budget-bar-equation {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.budget-eq-label {
+  color: var(--text-dim);
+}
+.budget-eq-value {
+  font-weight: 600;
+}
+.budget-eq-op {
+  color: var(--text-faint);
+  margin: 0 4px;
+}
+.budget-eq-result {
+  font-weight: 700;
+}
+.budget-eq-positive {
+  color: var(--c-up);
+}
+.budget-eq-negative {
+  color: var(--c-down);
+}
+.budget-eq-unavailable {
+  color: var(--text-dim);
+}
+
+/* ============================================================
    Budsjett page
    ============================================================ */
 

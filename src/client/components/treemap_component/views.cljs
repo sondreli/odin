@@ -429,37 +429,54 @@
    [:span {:style {:font-size "13px" :color "#555" :margin-top "2px"}}
     label]])
 
+(defn- budget-summary-line
+  "Summary line above the bar: 'X av Y kr brukt · Z over · W igjen i budsjetterte kategorier'"
+  [{:keys [spent target-sum overuse remaining]}]
+  (let [over? (pos? overuse)]
+    [:div {:class "budget-summary-line"}
+     [:span
+      [:span {:class "budget-summary-spent"} (fmt/format-amount spent)]
+      " av "
+      [:span {:class "budget-summary-target"} (fmt/format-amount target-sum)]
+      " kr brukt"]
+     (when over?
+       [:span
+        [:span {:class "budget-summary-sep"} " · "]
+        [:span {:class "budget-summary-over"} (fmt/format-amount overuse)]
+        " over"])
+     (when (pos? remaining)
+       [:span
+        [:span {:class "budget-summary-sep"} " · "]
+        [:span {:class "budget-summary-remaining"} (fmt/format-amount remaining)]
+        " igjen i budsjetterte kategorier"])]))
+
 (defn- budget-summary-bar
-  "Mobile-style segmented bar showing budget breakdown (Brukt / Overforbruk /
-   Uncategorized / Gjenstår) plus an arithmetic expression for current month's
-   available balance vs remaining budget.
+  "Summary bar showing budget breakdown (Brukt / Overforbruk / Ukategorisert / Gjenstår)
+   with treemap-matching colors and an arithmetic expression for remaining balance.
 
    Segments and their amounts are passed in directly so the caller controls
    classification."
-  [{:keys [spent overuse uncategorized remaining balance current-month?]}]
+  [{:keys [spent overuse uncategorized remaining balance current-month? target-sum]}]
   (let [total (+ spent overuse uncategorized remaining)]
     (when (pos? total)
       (let [pct       (fn [v] (* 100 (/ v total)))
-            segments  (cond-> [{:label "Brukt"      :amount spent
-                                :color "#4a6cf7"    :text-color "#333"
+            segments  (cond-> [{:label "Brukt"        :amount spent
+                                :seg-type :spent
                                 :pct (pct spent)}]
                         (pos? overuse)
-                        (conj {:label "Overforbruk" :amount overuse
-                               :color "#ef4444"     :text-color "#c00"
+                        (conj {:label "Overforbruk"   :amount overuse
+                               :seg-type :overuse
                                :pct (pct overuse)})
 
                         (pos? uncategorized)
-                        (conj {:label nil           :amount uncategorized
-                               :color "#9ca3af"     :text-color "#666"
+                        (conj {:label "Ukategorisert" :amount uncategorized
+                               :seg-type :uncategorized
                                :pct (pct uncategorized)})
 
                         (pos? remaining)
-                        (conj {:label "Gjenstår"    :amount remaining
-                               :color "#34d399"     :text-color "#333"
+                        (conj {:label "Gjenstår"      :amount remaining
+                               :seg-type :remaining
                                :pct (pct remaining)}))
-            ;; Estimated label width as a fraction of the bar width (~150px / ~850px).
-            ;; Used to detect when a right-anchored label would overlap the previous one
-            ;; and should be moved to a row below the bar instead.
             text-est-pct 18
             placements
             (loop [i 0
@@ -469,17 +486,13 @@
               (if (>= i (count segments))
                 result
                 (let [seg (nth segments i)
-                      has-label? (some? (:label seg))
                       bar-pct (:pct seg)
                       bar-right (+ cum bar-pct)
                       right-pct (- 100 bar-right)
-                      text-left (if has-label?
-                                  (max 0 (- bar-right text-est-pct))
-                                  bar-right)
-                      overlaps-prev? (and has-label? (pos? i) (< text-left prev-text-right))
+                      text-left (max 0 (- bar-right text-est-pct))
+                      overlaps-prev? (and (pos? i) (< text-left prev-text-right))
                       text-below? overlaps-prev?
                       my-text-right (cond
-                                      (not has-label?) prev-text-right
                                       text-below?      prev-text-right
                                       :else            (min 100 (max bar-right text-est-pct)))]
                   (recur (inc i)
@@ -494,9 +507,8 @@
               (if (>= i (count segments))
                 result
                 (let [seg (nth segments i)
-                      p (nth placements i)
-                      has-label? (some? (:label seg))]
-                  (if (or (not (:text-below? p)) (not has-label?))
+                      p (nth placements i)]
+                  (if (not (:text-below? p))
                     (recur (inc i) rows (conj result nil))
                     (let [bar-right (+ (:left-pct p) (:bar-pct p))
                           text-left (max 0 (- bar-right text-est-pct))
@@ -512,71 +524,98 @@
                                  (assoc rows row-idx new-right))]
                       (recur (inc i) rows (conj result row-idx)))))))
             below-row-count (count (distinct (filter some? below-placements)))
-            render-label (fn [seg]
-                           [:span
-                            [:span {:style {:color "#888" :margin-right "4px"}} (:label seg)]
-                            [:span {:style {:font-weight "600" :color (:text-color seg)}}
-                             (fmt/format-amount (:amount seg))]])]
-        [:div {:style {:margin-top "12px"}}
-         ;; Above-bar labels: one row, right-anchored to each segment that fits there
-         [:div {:style {:position "relative" :height "18px" :margin-bottom "2px"}}
+            seg-class (fn [seg-type]
+                        (case seg-type
+                          :spent "budget-bar-seg-spent"
+                          :overuse "budget-bar-seg-overuse"
+                          :uncategorized "budget-bar-seg-uncategorized"
+                          :remaining "budget-bar-seg-remaining"
+                          ""))
+            label-class (fn [seg-type]
+                          (case seg-type
+                            :spent "budget-label-spent"
+                            :overuse "budget-label-overuse"
+                            :uncategorized "budget-label-uncategorized"
+                            :remaining "budget-label-remaining"
+                            ""))
+            render-label (fn [seg narrow?]
+                           (let [lbl (:label seg)
+                                 amt (fmt/format-amount (:amount seg))]
+                             [:span {:class (str "budget-label " (label-class (:seg-type seg)))}
+                              (if narrow?
+                                [:span {:class "budget-label-amount"} amt]
+                                [:<>
+                                 [:span {:class "budget-label-name"} lbl]
+                                 [:span {:class "budget-label-amount"} amt]])]))]
+        [:div {:class "budget-bar-container"}
+         ;; Summary line above
+         [budget-summary-line {:spent (+ spent overuse)
+                               :target-sum target-sum
+                               :overuse overuse
+                               :remaining remaining}]
+         ;; Above-bar labels
+         [:div {:class "budget-bar-labels-above"}
           (doall
            (for [[i seg] (map-indexed vector segments)
-                 :let [p (nth placements i)]
-                 :when (and (:label seg) (not (:text-below? p)))]
+                 :let [p (nth placements i)
+                       narrow? (< (:bar-pct p) 12)]
+                 :when (not (:text-below? p))]
              ^{:key (str "above-" i)}
              [:div {:style {:position "absolute"
                             :right (str (:right-pct p) "%")
                             :bottom "0"
-                            :font-size "12px"
-                            :white-space "nowrap"
-                            :padding-right "4px"}}
-              (render-label seg)]))]
+                            :padding-right "4px"}
+                    :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
+              (render-label seg narrow?)]))]
          ;; Continuous segmented bar
-         [:div {:style {:display "flex" :height "10px" :border-radius "5px" :overflow "hidden"}}
+         [:div {:class "budget-bar-segments"}
           (doall
-           (for [[i seg] (map-indexed vector segments)]
+           (for [[i seg] (map-indexed vector segments)
+                 :let [p (nth placements i)]]
              ^{:key (str "bar-" i)}
-             [:div {:style {:flex (:pct seg) :background-color (:color seg)}}]))]
+             [:div {:class (str "budget-bar-seg " (seg-class (:seg-type seg)))
+                    :style {:flex (:pct seg)}
+                    :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}]))]
          ;; Below-bar label rows (one per row that was needed)
          (when (pos? below-row-count)
            (doall
             (for [row (range below-row-count)]
               ^{:key (str "below-row-" row)}
-              [:div {:style {:position "relative" :height "18px"
-                             :margin-top (if (zero? row) "4px" "0")}}
+              [:div {:class "budget-bar-labels-below"
+                     :style {:margin-top (if (zero? row) "4px" "0")}}
                (doall
                 (for [[i seg] (map-indexed vector segments)
                       :let [p (nth placements i)
-                            bp (nth below-placements i)]
-                      :when (and (:label seg) (:text-below? p) (= bp row))]
+                            bp (nth below-placements i)
+                            narrow? (< (:bar-pct p) 12)]
+                      :when (and (:text-below? p) (= bp row))]
                   ^{:key (str "below-" i)}
                   [:div {:style {:position "absolute"
                                  :right (str (:right-pct p) "%")
                                  :top "0"
-                                 :font-size "12px"
-                                 :white-space "nowrap"
-                                 :padding-right "4px"}}
-                   (render-label seg)]))])))
-         ;; Arithmetic expression for current month: balance − remaining = leftover
+                                 :padding-right "4px"}
+                         :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
+                   (render-label seg narrow?)]))])))
+         ;; Arithmetic expression for current month: Saldo X − gjenstår Y = Z ledig
          (when current-month?
            (let [diff (when balance (- balance remaining))]
-             [:div {:style {:margin-top "10px" :padding-top "8px"
-                            :border-top "1px solid #e5e7eb"
-                            :text-align "center" :font-size "14px"
-                            :color (if balance "#333" "#999")}}
+             [:div {:class "budget-bar-equation"}
               (if balance
                 [:span
-                 [:span (fmt/format-amount balance)]
-                 [:span {:style {:margin "0 6px" :color "#888"}} "−"]
-                 [:span (fmt/format-amount remaining)]
-                 [:span {:style {:margin "0 6px" :color "#888"}} "="]
-                 [:span {:style {:font-weight "600"
-                                 :color (cond (nil? diff) "#999"
-                                              (neg? diff)  "#ef4444"
-                                              :else         "#34d399")}}
-                  (fmt/format-amount diff)]]
-                (str "— − " (fmt/format-amount remaining) " = —"))]))]))))
+                 [:span {:class "budget-eq-label"} "Saldo "]
+                 [:span {:class "budget-eq-value"} (fmt/format-amount balance)]
+                 [:span {:class "budget-eq-op"} " − "]
+                 [:span {:class "budget-eq-label"} "gjenstår "]
+                 [:span {:class "budget-eq-value"} (fmt/format-amount remaining)]
+                 [:span {:class "budget-eq-op"} " = "]
+                 [:span {:class (str "budget-eq-result "
+                                     (cond (nil? diff) ""
+                                           (neg? diff) "budget-eq-negative"
+                                           :else "budget-eq-positive"))}
+                  (fmt/format-amount diff)]
+                 [:span {:class "budget-eq-label"} " ledig"]]
+                [:span {:class "budget-eq-unavailable"}
+                 "Saldo — − gjenstår " (fmt/format-amount remaining) " = — ledig"])]))]))))
 
 (defn- diff-bar
   "Horizontal bar spanning between target-pct and spending-pct.
@@ -697,10 +736,6 @@
                                :background (str "repeating-linear-gradient(45deg, transparent, transparent 4px, "
                                                 (:color selected-tag) " 4px, " (:color selected-tag) " 6px)")}}]
                (:name selected-tag)])])
-         (when targets?
-           [:div {:style {:position "relative" :height "28px" :margin-bottom "2px"}}
-            (when target-pct
-              [treemap-arrow-above target-pct (fmt/format-amount target-sum)])])
          [treemap {:categories           categories
                    :pct-base             pct-base
                    :show-targets?        targets?
@@ -709,9 +744,6 @@
                    :period-transactions  period-txns
                    :selected-tag         selected-tag
                    :height-ratio         height-ratio}]
-         [:div {:style {:position "relative" :height "28px" :margin-top "2px"}}
-          (when (and spending-pct (pos? total-spending))
-            [treemap-arrow-below spending-pct (fmt/format-amount total-spending)])]
          (when (and tag-value (pos? tag-value) (pos? total-spending))
            (let [bar-pct (min 100 (* 100 (/ tag-value total-spending)))]
              [:div {:style {:position "relative" :height "22px" :margin-top "2px"}}
@@ -730,8 +762,6 @@
                               :color tag-bar-color
                               :white-space "nowrap"}}
                (fmt/format-amount tag-value)]]))
-         (when (and targets? target-pct spending-pct)
-           [diff-bar target-pct spending-pct diff-value])
          (when (and targets? (pos? target-sum))
            (let [now (js/Date.)
                  current-month? (and single-month?
@@ -754,13 +784,8 @@
                                   :uncategorized uncategorized
                                   :remaining remaining
                                   :balance balance
-                                  :current-month? current-month?}]))
-         [:div.treemap-foot
-          [:span.spent
-           (str "▲ " (fmt/format-kr total-spending) " brukt")]
-          (when (and targets? (pos? target-sum))
-            [:span.budget
-             (str " / " (fmt/format-kr target-sum) " budsjett")])]])))
+                                  :current-month? current-month?
+                                  :target-sum target-sum}]))])))
 
 (defn- unallocated-label-styles [min-dim]
   {:name {:color "var(--text-dim)"
