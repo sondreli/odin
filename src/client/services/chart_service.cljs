@@ -126,6 +126,12 @@
       ;; day-of-month ("01".."31") or anything else: pass through
       :else date)))
 
+;; The scale and the SVG must share this width. A wider scale draws the last
+;; bar past the viewBox, which clips it — most of the bar, once there are many.
+(def ^:private barchart-width 900)
+(def ^:private barchart-margin-left 40)
+(def ^:private barchart-margin-right 16)
+
 (defn x-scale [data]
   (let [groupSort (d3/groupSort data
                             (fn [D] (d3/sum (clj->js D) (fn [d] (goog.object/get d "amount"))))
@@ -137,13 +143,10 @@
                         (map #(vector (to-iso-date %) %))
                         (sort-by first)
                         (map second))
-        margin-left 40
-        width 928
-        margin-right 10
         scale (-> d3
                   .scaleBand
                   (.domain domain)
-                  (.range [margin-left (- width margin-right)])
+                  (.range [barchart-margin-left (- barchart-width barchart-margin-right)])
                   (.padding 0.1))]
     scale))
 
@@ -190,7 +193,7 @@
         marginBottom (if narrow? 60 20)
         height (if narrow? 540 500)
         y (y-scale series height marginBottom)
-        marginLeft 40
+        marginLeft barchart-margin-left
         month-index (make-index data :month)
         div (-> d3
                 (.select "body")
@@ -200,9 +203,9 @@
         svg (-> d3
                 (.select "#mychart")
                 (.append "svg")
-                (.attr "width" 900)
+                (.attr "width" barchart-width)
                 (.attr "height" height)
-                (.attr "viewBox" (clj->js [0 0 900 height]))
+                (.attr "viewBox" (clj->js [0 0 barchart-width height]))
                 (.attr "style" "max-width: 100%; height: auto;")
                 (.append "g")
                 (.selectAll)
