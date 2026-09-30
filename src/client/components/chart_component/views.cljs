@@ -5,5 +5,5 @@
   [:div
    [:button {:on-click #(dispatch [:toggle-chart-size])} "Vis alle kategorier"]
    [:div
-    {:id "mychart" :style {:height "800px"}}
+    {:id "mychart" :style {:width "100%" :overflow "visible"}}
     (dispatch [:draw-stacked-barchart displayed-transactions categories period chart-size])]])

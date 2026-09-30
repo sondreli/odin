@@ -126,11 +126,12 @@
       ;; day-of-month ("01".."31") or anything else: pass through
       :else date)))
 
-;; The scale and the SVG must share this width. A wider scale draws the last
-;; bar past the viewBox, which clips it — most of the bar, once there are many.
+;; Coordinate width of the chart. The SVG element itself is width 100% of the
+;; column; a fixed pixel width is what the page shell clips, which cuts off
+;; the last bar. The right margin keeps that bar inside the viewBox.
 (def ^:private barchart-width 900)
 (def ^:private barchart-margin-left 40)
-(def ^:private barchart-margin-right 16)
+(def ^:private barchart-margin-right 36)
 
 (defn x-scale [data]
   (let [groupSort (d3/groupSort data
@@ -146,7 +147,7 @@
         scale (-> d3
                   .scaleBand
                   (.domain domain)
-                  (.range [barchart-margin-left (- barchart-width barchart-margin-right)])
+                  (.range (clj->js [barchart-margin-left (- barchart-width barchart-margin-right)]))
                   (.padding 0.1))]
     scale))
 
@@ -203,10 +204,12 @@
         svg (-> d3
                 (.select "#mychart")
                 (.append "svg")
-                (.attr "width" barchart-width)
-                (.attr "height" height)
-                (.attr "viewBox" (clj->js [0 0 barchart-width height]))
-                (.attr "style" "max-width: 100%; height: auto;")
+                (.attr "viewBox" (str "0 0 " barchart-width " " height))
+                (.attr "preserveAspectRatio" "xMinYMin meet")
+                (.style "width" "100%")
+                (.style "height" "auto")
+                (.style "display" "block")
+                (.style "overflow" "visible")
                 (.append "g")
                 (.selectAll)
                 (.data series)
