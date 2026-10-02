@@ -871,7 +871,13 @@
           pace-now (pace/for-today @(subscribe [:pace-prediction]))
           single-month? (= :month (:period-type period))
           targets?   (and single-month? show-targets?)
-          pace-today? (and targets? (some? pace-now))
+          ;; Ticks follow the month on screen, not the Vis budsjett checkbox.
+          now (js/Date.)
+          viewing-current-month? (and single-month?
+                                      (:start period)
+                                      (= (.getFullYear (:start period)) (.getFullYear now))
+                                      (= (.getMonth (:start period)) (.getMonth now)))
+          pace-today? (and viewing-current-month? (some? pace-now))
           filters?   show-filters?
             visible    (->> categories
                             (remove #(layout/excluded-ids (:id %)))
@@ -918,7 +924,7 @@
                                             (filter #(some #{tag-id} (:tag-ids %)) period-txns)))))
             tag-bar-color  (when selected-tag (:color selected-tag))]
         [:div.treemap-wrap
-         (when (or targets? filters? selected-tag)
+         (when (or targets? filters? selected-tag pace-today?)
            [:div {:style {:display "flex" :flex-wrap "wrap" :align-items "center" :gap "12px"
                           :margin-bottom "4px" :font-size "11px" :color "#888"}}
             (when targets?
@@ -932,12 +938,12 @@
                [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
                 [:div {:style {:width "12px" :height "12px" :border-radius "2px"
                                :background "repeating-linear-gradient(45deg, transparent, transparent 2px, #6b7280 2px, #6b7280 3px)"}}]
-                "Over budsjett"]
-               (when pace-today?
-                 [:div {:style {:display "flex" :align-items "center" :gap "4px"}
-                        :title "Forventet forbruk teller ikke med ukategorisert."}
-                  [:div.pace-legend-tick]
-                  "Forventet i dag"])])
+                "Over budsjett"]])
+            (when pace-today?
+              [:div {:style {:display "flex" :align-items "center" :gap "4px"}
+                     :title "Forventet forbruk teller ikke med ukategorisert."}
+               [:div.pace-legend-tick]
+               "Forventet i dag"])
             (when filters?
               [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
                [:div {:style {:width "12px" :height "12px" :border-radius "2px"

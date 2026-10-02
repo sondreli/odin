@@ -851,7 +851,9 @@
 
 (reg-event-db
  :pace-prediction-failure
- (fn [db [_ request-id]]
+ (fn [db [_ request-id response]]
+   (when (= request-id (:pace-request-id db))
+     (js/console.error "Pace prediction failed" response))
    (if (not= request-id (:pace-request-id db))
      db
      (assoc db :pace-loading? false))))

@@ -11,7 +11,7 @@
             BatchWriteItemRequest WriteRequest PutRequest DeleteRequest
             BatchGetItemRequest KeysAndAttributes
             QueryRequest GetItemRequest DeleteItemRequest UpdateItemRequest
-            ScanRequest DynamoDbException]
+            ScanRequest DynamoDbException ResourceNotFoundException]
            [software.amazon.awssdk.http.urlconnection UrlConnectionHttpClient]
            [software.amazon.awssdk.auth.credentials StaticCredentialsProvider AwsBasicCredentials]
            [software.amazon.awssdk.regions Region]
@@ -698,34 +698,62 @@
 ;; Pace predictions (one frozen baseline per user per month)
 ;;
 
+(defonce ^:private missing-pace-table-warned (atom false))
+
+(defn- missing-pace-table?
+  "True when DynamoDB says PacePrediction has not been created on this endpoint."
+  [e]
+  (or (instance? ResourceNotFoundException e)
+      (boolean (re-find #"non-existent table" (str (some-> e .getMessage))))))
+
+(defn- warn-missing-pace-table! []
+  (when (compare-and-set! missing-pace-table-warned false true)
+    (let [endpoint (or @config/dynamodb-endpoint "the AWS account this process uses")]
+      (println "PacePrediction table is missing on" endpoint
+               ". The curve is still calculated, but it is not stored."
+               "Create the table with the same ODIN_DYNAMODB_ENDPOINT, for example:"
+               "ODIN_DYNAMODB_ENDPOINT=http://localhost:8000 clj -X odin.db-schemas2/-main"))))
+
 (defn store-pace-prediction
   "Write the frozen baseline. `prediction` is the map returned by the pace
-   service, including :month and :algorithm-version."
+   service, including :month and :algorithm-version. A missing table is logged
+   once and the unsaved curve is returned so the request can still succeed."
   [user-id prediction]
-  (let [record {:user-id user-id
-                :month-key (:month prediction)
-                :algorithm-version (:algorithm-version prediction)
-                :newest-transaction-date (or (:newest-transaction-date prediction) "")
-                :created-at (or (:created-at prediction) "")
-                :payload (pr-edn-str prediction)}]
-    (store-items pace-prediction-table-name
-                 [(item->db-item pace-prediction-config record)])
-    prediction))
+  (try
+    (let [record {:user-id user-id
+                  :month-key (:month prediction)
+                  :algorithm-version (:algorithm-version prediction)
+                  :newest-transaction-date (or (:newest-transaction-date prediction) "")
+                  :created-at (or (:created-at prediction) "")
+                  :payload (pr-edn-str prediction)}]
+      (store-items pace-prediction-table-name
+                   [(item->db-item pace-prediction-config record)])
+      prediction)
+    (catch Exception e
+      (if (missing-pace-table? e)
+        (do (warn-missing-pace-table!) prediction)
+        (throw e)))))
 
 (defn get-pace-prediction
-  "Return the stored prediction map, or nil when this month has not been built."
+  "Return the stored prediction map, or nil when this month has not been built.
+   A missing table is the same as nothing stored."
   [user-id month-key]
-  (let [request (-> (GetItemRequest/builder)
-                    (.tableName pace-prediction-table-name)
-                    (.key {"UserId" (str->attr user-id)
-                           "MonthKey" (str->attr month-key)})
-                    (.build))
-        response (.getItem ^DynamoDbClient @dynamodb-client ^GetItemRequest request)]
-    (when (seq (.item response))
-      (let [item (sdk-item->clj-item (.item response))
-            payload (get-in item [:Payload :S])]
-        (when (and (string? payload) (not= payload ""))
-          (edn/read-string payload))))))
+  (try
+    (let [request (-> (GetItemRequest/builder)
+                      (.tableName pace-prediction-table-name)
+                      (.key {"UserId" (str->attr user-id)
+                             "MonthKey" (str->attr month-key)})
+                      (.build))
+          response (.getItem ^DynamoDbClient @dynamodb-client ^GetItemRequest request)]
+      (when (seq (.item response))
+        (let [item (sdk-item->clj-item (.item response))
+              payload (get-in item [:Payload :S])]
+          (when (and (string? payload) (not= payload ""))
+            (edn/read-string payload)))))
+    (catch Exception e
+      (if (missing-pace-table? e)
+        (do (warn-missing-pace-table!) nil)
+        (throw e)))))
 
 (defn delete-pace-prediction [user-id month-key]
   (delete-item pace-prediction-table-name
