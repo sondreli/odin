@@ -5,6 +5,7 @@
             [clojure.string :as s]
             [client.services.date-service :as date]
             [client.components.treemap-component.layout :as layout]
+            [client.services.pace-service :as pace]
             [client.components.summed-table-component.views :as summed]
             [client.services.chart-service :as chart-svc]
             [common.category-service :as category]
@@ -85,7 +86,33 @@
                             :textShadowRadius 3}}
       (gstring/format "%.1f%%" pct)])])
 
-(defn- mobile-treemap-rect [{:keys [id name color value target]} rect pct-base selected-name]
+(defn- mobile-pace-marker [pace-marker horizontal?]
+  (when-let [fraction (:fraction pace-marker)]
+    [:<>
+     (when (and (:band-low pace-marker) (:band-high pace-marker)
+                (> (- (:band-high pace-marker) (:band-low pace-marker)) 0.004))
+       [:> View {:pointerEvents "none"
+                 :style (if horizontal?
+                          #js {:position "absolute" :top 0 :bottom 0
+                               :left (str (* 100 (:band-low pace-marker)) "%")
+                               :width (str (* 100 (- (:band-high pace-marker) (:band-low pace-marker))) "%")
+                               :backgroundColor "rgba(255,255,255,0.32)"}
+                          #js {:position "absolute" :left 0 :right 0
+                               :top (str (* 100 (:band-low pace-marker)) "%")
+                               :height (str (* 100 (- (:band-high pace-marker) (:band-low pace-marker))) "%")
+                               :backgroundColor "rgba(255,255,255,0.32)"})}])
+     [:> View {:pointerEvents "none"
+               :style (if horizontal?
+                        #js {:position "absolute" :top 0 :bottom 0 :width 2
+                             :marginLeft -1
+                             :left (str (* 100 fraction) "%")
+                             :backgroundColor "#fff"}
+                        #js {:position "absolute" :left 0 :right 0 :height 2
+                             :marginTop -1
+                             :top (str (* 100 fraction) "%")
+                             :backgroundColor "#fff"})}]]))
+
+(defn- mobile-treemap-rect [{:keys [id name color value target pace-marker]} rect pct-base selected-name]
   (let [{ix :x iy :y iw :w ih :h} rect
         faded? (and selected-name (not= name selected-name))
         pct (when (and pct-base (pos? pct-base))
@@ -127,8 +154,10 @@
        [:> View {:style #js {:flex 1 :backgroundColor base-color}}])
      ;; Label overlay
      [:> View {:style #js {:position "absolute" :left 0 :top 0 :right 0 :bottom 0
-                            :justifyContent "center" :alignItems "center"}}
-      [treemap-label name pct min-dim]]]))
+                            :justifyContent "center" :alignItems "center"
+                            :pointerEvents "none"}}
+      [treemap-label name pct min-dim]]
+     [mobile-pace-marker pace-marker horizontal?]]))
 
 (defn mobile-treemap [below-height-atom & {:keys [show-budget?] :or {show-budget? true}}]
   (let [width-atom (r/atom nil)]
@@ -138,6 +167,12 @@
             filter-path @(subscribe [:filter-path])
             selected-name (when (= 1 (count filter-path)) (first filter-path))
             single-month? (and show-budget? (= :month (:period-type period)))
+            now (js/Date.)
+            current-month? (and single-month?
+                                (:start period)
+                                (= (.getFullYear (:start period)) (.getFullYear now))
+                                (= (.getMonth (:start period)) (.getMonth now)))
+            pace-now (when current-month? (pace/for-today @(subscribe [:pace-prediction])))
             below-h (or @below-height-atom 0)
             measured? (pos? below-h)
             treemap-height (/ screen-height 2)
@@ -172,8 +207,13 @@
                     (mapv (fn [c]
                             (let [effective (if single-month?
                                              (max (:value c) (or (:target c) 0))
-                                             (:value c))]
-                              (assoc c :area (* va (/ effective total-value)))))
+                                             (:value c))
+                                  marker (when (and pace-now (pos? (or (:target c) 0)))
+                                           (when-let [pc (pace/category-pace pace-now (:id c))]
+                                             (pace/tile-marker pc now effective
+                                                               (:days-in-month pace-now))))]
+                              (cond-> (assoc c :area (* va (/ effective total-value)))
+                                marker (assoc :pace-marker marker))))
                           cats))
             laid-out (when (and items (seq items) cw (pos? cw))
                        (layout/squarify items {:x 0 :y 0 :w cw :h treemap-height}))]
@@ -248,7 +288,34 @@
         uncategorized (reduce + 0 (map :value unbudgeted))
         remaining (max 0 (- target-sum spent))
         total (+ spent overuse uncategorized remaining)
-        balance (:available-balance balance-data)]
+        balance (:available-balance balance-data)
+        now (js/Date.)
+        current-month? (and single-month?
+                            (:start period)
+                            (= (.getFullYear (:start period)) (.getFullYear now))
+                            (= (.getMonth (:start period)) (.getMonth now)))
+        pace-now (when current-month? (pace/for-today @(subscribe [:pace-prediction])))
+        budgeted-ids (map :id budgeted)
+        pace-expected (when pace-now (pace/aggregate-expected pace-now budgeted-ids now))
+        pace-band (when pace-now (pace/aggregate-band pace-now budgeted-ids now))
+        pace-frac (when (and pace-expected (pos? total))
+                    (pace/marker-fraction pace-expected total))
+        pace-low (when (and pace-band (pos? total))
+                   (pace/marker-fraction (:low pace-band) total))
+        pace-high (when (and pace-band (pos? total))
+                    (pace/marker-fraction (:high pace-band) total))
+        pace-note (when pace-now
+                    (let [n (or (:days-in-month pace-now) (pace/days-in-month now))
+                          used (+ spent overuse)
+                          pct (if (pos? target-sum)
+                                (Math/round (* 100 (/ used target-sum)))
+                                0)]
+                      (str "Dag " (.getDate now) " av " n " · " pct "% av budsjettet brukt")))
+        selected-pace (when (and selected-name pace-now)
+                        (when-let [cat (first budgeted)]
+                          (pace/category-pace pace-now (:id cat))))
+        selected-expected (when selected-pace
+                            (pace/expected-at selected-pace now (:days-in-month pace-now)))]
     (when (and single-month? (pos? target-sum) (pos? total))
       (let [;; Order: Spent, Overspent, Uncategorized (no label), Remaining
             segments (cond-> [{:label "Brukt" :amount spent :color "#4a6cf7"
@@ -326,6 +393,10 @@
                                )
             below-row-count (count (filter some? (distinct below-placements)))]
         [:> View {:style #js {:paddingTop 12 :paddingBottom 8 :backgroundColor "#f5f5f5"}}
+         (when pace-note
+           [:> Text {:style #js {:fontSize 12 :color "#666" :textAlign "center"
+                                 :marginBottom 6 :paddingHorizontal 12}}
+            pace-note])
          ;; Text labels above bars (single row, all absolutely positioned)
          [:> View {:style #js {:height 18}}
           (doall
@@ -342,12 +413,32 @@
                    (:label seg)]
                   [:> Text {:style #js {:fontSize 14 :fontWeight "600" :color (:text-color seg)} :numberOfLines 1}
                    (format-amount (:amount seg))]]))))]
-         ;; Continuous bar strip
-         [:> View {:style #js {:flexDirection "row" :height 10 :borderRadius 5 :overflow "hidden"}}
-          (doall
-           (for [[idx seg] (map-indexed vector segments)]
-             ^{:key (str "bar-" idx)}
-             [:> View {:style #js {:flex (:pct seg) :backgroundColor (:color seg)}}]))]
+         ;; Continuous bar strip. The tick sits outside the clipped row.
+         [:> View {:style #js {:position "relative"}}
+          [:> View {:style #js {:flexDirection "row" :height 10 :borderRadius 5 :overflow "hidden"}}
+           (doall
+            (for [[idx seg] (map-indexed vector segments)]
+              ^{:key (str "bar-" idx)}
+              [:> View {:style #js {:flex (:pct seg) :backgroundColor (:color seg)}}]))]
+          (when (and pace-low pace-high (> (- pace-high pace-low) 0.004))
+            [:> View {:pointerEvents "none"
+                      :style #js {:position "absolute" :top 0 :height 10
+                                  :left (str (* 100 pace-low) "%")
+                                  :width (str (* 100 (- pace-high pace-low)) "%")
+                                  :backgroundColor "rgba(28,20,12,0.16)"}}])
+          (when pace-frac
+            [:> View {:pointerEvents "none"
+                      :style #js {:position "absolute" :top -2 :bottom -2 :width 2
+                                  :marginLeft -1
+                                  :left (str (* 100 pace-frac) "%")
+                                  :backgroundColor "#1c140c"}}])]
+         (when (and selected-name (number? selected-expected))
+           (let [cat (first budgeted)]
+             [:> Text {:style #js {:fontSize 13 :color "#333" :textAlign "center"
+                                   :marginTop 8 :paddingHorizontal 12}}
+              (str (:name cat) ": " (format-amount (:value cat)) " av "
+                   (format-amount (:target cat)) " kr, forventet "
+                   (format-amount selected-expected) " kr i dag")]))
          ;; Text labels below bars (multiple rows if overlapping)
          (when (some some? below-placements)
            (let [max-row (apply max (filter some? below-placements))]

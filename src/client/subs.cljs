@@ -63,6 +63,11 @@
    (:period db)))
 
 (reg-sub
+ :pace-prediction
+ (fn [db _]
+   (:pace-prediction db)))
+
+(reg-sub
  :period-selector
  (fn [db _]
    (:period-selector db)))

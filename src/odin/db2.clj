@@ -221,6 +221,17 @@
 (def grocery-table-name "GroceryItem")
 (def security-price-table-name "SecurityPrice")
 (def security-setting-table-name "SecuritySetting")
+(def pace-prediction-table-name "PacePrediction")
+
+;; One item per user per calendar month. The curve itself is an EDN string:
+;; DynamoDB here only stores scalars, and the payload stays well under the
+;; 400 KB item limit (a few dozen categories, each with one number per day).
+(def pace-prediction-config [[:user-id                   :UserId                 :S]
+                             [:month-key                 :MonthKey               :S]
+                             [:algorithm-version         :AlgorithmVersion       :N]
+                             [:newest-transaction-date   :NewestTransactionDate  :S]
+                             [:created-at                :CreatedAt              :S]
+                             [:payload                   :Payload                :S]])
 
 ;;
 ;;  Write to database
@@ -684,6 +695,43 @@
   (delete-item loan-table-name {:UserId {:S user-id} :Id {:S loan-id}}))
 
 ;;
+;; Pace predictions (one frozen baseline per user per month)
+;;
+
+(defn store-pace-prediction
+  "Write the frozen baseline. `prediction` is the map returned by the pace
+   service, including :month and :algorithm-version."
+  [user-id prediction]
+  (let [record {:user-id user-id
+                :month-key (:month prediction)
+                :algorithm-version (:algorithm-version prediction)
+                :newest-transaction-date (or (:newest-transaction-date prediction) "")
+                :created-at (or (:created-at prediction) "")
+                :payload (pr-edn-str prediction)}]
+    (store-items pace-prediction-table-name
+                 [(item->db-item pace-prediction-config record)])
+    prediction))
+
+(defn get-pace-prediction
+  "Return the stored prediction map, or nil when this month has not been built."
+  [user-id month-key]
+  (let [request (-> (GetItemRequest/builder)
+                    (.tableName pace-prediction-table-name)
+                    (.key {"UserId" (str->attr user-id)
+                           "MonthKey" (str->attr month-key)})
+                    (.build))
+        response (.getItem ^DynamoDbClient @dynamodb-client ^GetItemRequest request)]
+    (when (seq (.item response))
+      (let [item (sdk-item->clj-item (.item response))
+            payload (get-in item [:Payload :S])]
+        (when (and (string? payload) (not= payload ""))
+          (edn/read-string payload))))))
+
+(defn delete-pace-prediction [user-id month-key]
+  (delete-item pace-prediction-table-name
+               {:UserId {:S user-id} :MonthKey {:S month-key}}))
+
+;;
 ;; Filters
 ;;
 
@@ -928,6 +976,7 @@
     (swap! counts assoc "Filter" (delete-all-items-for-user filter-table-name :UserId :Id user-id))
     (swap! counts assoc "Account" (delete-all-items-for-user account-table-name :UserId :AccountId user-id))
     (swap! counts assoc "GroceryItem" (delete-all-items-for-user grocery-table-name :UserId :Timestamp user-id))
+    (swap! counts assoc "PacePrediction" (delete-all-items-for-user pace-prediction-table-name :UserId :MonthKey user-id))
     (delete-item user-table-name {:UserId {:S user-id}})
     (swap! counts assoc "User" 1)
     @counts))

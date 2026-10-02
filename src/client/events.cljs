@@ -9,6 +9,7 @@
             [client.events.utils :as utils]
             [client.services.date-service :as date]
             [client.services.color-service :as color]
+            [client.services.pace-service :as pace]
             [re-frame.core :refer [reg-event-db reg-event-fx after dispatch]]
             [clojure.string :as s]
             [goog.object :as g]
@@ -61,7 +62,8 @@
                    [:request-accounts]
                    [:request-investment-transactions]
                    [:request-grocery-items]
-                   [:request-balance]]})))
+                   [:request-balance]
+                   [:request-pace-prediction]]})))
 
 (reg-event-db
  :check-auth-failure
@@ -99,7 +101,8 @@
                    [:request-accounts]
                    [:request-investment-transactions]
                    [:request-grocery-items]
-                   [:request-balance]]})))
+                   [:request-balance]
+                   [:request-pace-prediction]]})))
 
 (reg-event-db
  :login-failure
@@ -148,7 +151,11 @@
           :categories []
           :reports []
           :tags []
-          :accounts [])))
+          :accounts []
+          :pace-prediction nil
+          :pace-month nil
+          :pace-loading? false
+          :pace-request-id nil)))
 
 (reg-event-db
  :set-auth-view
@@ -793,20 +800,61 @@
    {:db db
     :dispatch [:request-all-transactions]}))
 
-(reg-event-db
+(reg-event-fx
  :process-response
  (fn
-   [db [_ response]]
+   [{db :db} [_ response]]
    (let [transactions (vec (:transactions response))
          new-count (:new-count response 0)
          updated-count (:updated-count response 0)]
-     (-> db
-       (assoc :loading "done")
-       (dissoc :refreshing?)
-       (assoc :refresh-result {:new-count new-count :updated-count updated-count})
-       (assoc :bank-reauth (when (:reauth-required response)
-                             {:account-id (:reauth-account-id response)}))
-       (process-transactions transactions)))))
+     {:db (-> db
+              (assoc :loading "done")
+              (dissoc :refreshing?)
+              (assoc :refresh-result {:new-count new-count :updated-count updated-count})
+              (assoc :bank-reauth (when (:reauth-required response)
+                                    {:account-id (:reauth-account-id response)}))
+              (process-transactions transactions))
+      ;; Paid flags are derived on each read, so refresh the curve after a sync
+      ;; without dropping the one already on screen.
+      :dispatch [:request-pace-prediction {:force? true}]})))
+
+(reg-event-fx
+ :request-pace-prediction
+ (fn [{db :db} [_ opts]]
+   (let [force? (:force? opts)
+         month-key (pace/current-month-key)
+         request-id (inc (or (:pace-request-id db) 0))
+         loaded? (and (:pace-prediction db) (= (:pace-month db) month-key))]
+     (if (or (nil? (api/get-token))
+             (and (not force?) (or (:pace-loading? db) loaded?)))
+       {:db db}
+       {:db (assoc db :pace-loading? true :pace-month month-key :pace-request-id request-id)
+        :http-xhrio {:method          :get
+                     :uri             (api/uri (str "/pace-prediction?month=" month-key))
+                     :headers         (api/auth-header)
+                     :response-format (ajax/json-response-format {:keywords? true})
+                     :on-success      [:pace-prediction-success month-key request-id]
+                     :on-failure      [:pace-prediction-failure request-id]}}))))
+
+(reg-event-db
+ :pace-prediction-success
+ (fn [db [_ month-key request-id response]]
+   (if (not= request-id (:pace-request-id db))
+     db
+     (let [prediction (if (map? response)
+                        response
+                        (js->clj response :keywordize-keys true))]
+       (assoc db
+              :pace-prediction prediction
+              :pace-month month-key
+              :pace-loading? false)))))
+
+(reg-event-db
+ :pace-prediction-failure
+ (fn [db [_ request-id]]
+   (if (not= request-id (:pace-request-id db))
+     db
+     (assoc db :pace-loading? false))))
 
 
 (reg-event-db
