@@ -61,6 +61,8 @@
        :treemap-target nil
        :treemap-show-targets? false
        :treemap-show-filters? false
+       :pace-prediction nil
+       :pace-loading? false
        :transactions-search ""
        :theme :light
        :active-menu :transaksjoner

@@ -18,6 +18,7 @@
             [odin.services.tag-service :as tag]
             [odin.services.filter-service :as filter-svc]
             [odin.services.loan-service :as loan]
+            [odin.services.pace-service :as pace]
             [ring.middleware.json :refer [wrap-json-body]]
             [ring.middleware.cors :refer [wrap-cors]]))
 
@@ -134,6 +135,7 @@
   (cpj/GET "/transactions/recent" params transaction/recent_transaction_handler)
   (cpj/GET "/transactions/:id/details" [id] (partial transaction/transaction_details_handler id))
   (cpj/GET "/transactions" params transaction/transaction_handler)
+  (cpj/GET "/pace-prediction" params pace/prediction-handler)
   (cpj/GET "/investment-transactions" params transaction/investment-transactions-handler)
   (cpj/GET "/balance" params transaction/balance_handler)
   (cpj/GET "/categories" params category/categories-handler)

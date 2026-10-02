@@ -5,7 +5,8 @@
             [goog.string.format]
             [common.category-service :as category]
             [client.components.treemap-component.layout :as layout]
-            [client.services.format-service :as fmt]))
+            [client.services.format-service :as fmt]
+            [client.services.pace-service :as pace]))
 
 (def ^:private parse-target layout/parse-target)
 (def ^:private darken-color layout/darken-color)
@@ -89,7 +90,27 @@
           :text-shadow "0 1px 3px rgba(0,0,0,0.5)"
           :text-align "center"}})
 
-(defn- treemap-rect [{:keys [id name color value target tag-ratio tag-color]} rect pct-base
+(defn- pace-tile-marker
+  "White tick, with a soft band behind it, across a budget tile.
+   Horizontal tiles grow left to right. Vertical tiles grow top to bottom,
+   matching the spent/remaining split."
+  [{:keys [fraction band-low band-high]} horizontal?]
+  (when (number? fraction)
+    [:<>
+     (when (and (number? band-low) (number? band-high) (> (- band-high band-low) 0.004))
+       [:div {:class (if horizontal? "pace-band" "pace-band pace-band-h")
+              :style (if horizontal?
+                       {:left (str (* 100 band-low) "%")
+                        :width (str (* 100 (- band-high band-low)) "%")}
+                       {:top (str (* 100 band-low) "%")
+                        :height (str (* 100 (- band-high band-low)) "%")})}])
+     [:div {:class (if horizontal? "pace-tick" "pace-tick pace-tick-h")
+            :title "Forventet i dag"
+            :style (if horizontal?
+                     {:left (str (* 100 fraction) "%")}
+                     {:top (str (* 100 fraction) "%")})}]]))
+
+(defn- treemap-rect [{:keys [id name color value target tag-ratio tag-color pace-marker]} rect pct-base
                      hovered-id selected-name show-targets?]
   (let [{ix :x iy :y iw :w ih :h} rect
         pct     (when (and pct-base (pos? pct-base))
@@ -128,7 +149,9 @@
            :on-click #(dispatch [:view-category name])
            :title (str name " — " (when pct (gstring/format "%.1f%%" pct))
                        " (" (fmt/format-amount value) ")"
-                       (when cat-target (str " target: " (fmt/format-amount cat-target))))}
+                       (when cat-target (str " target: " (fmt/format-amount cat-target)))
+                       (when-let [expected (:expected pace-marker)]
+                         (str ", forventet " (fmt/format-amount expected) " kr i dag")))}
      (if show-split?
        (let [normal-pct (str (* 100 normal-ratio) "%")
              accent-pct (str (* 100 (- 1 normal-ratio)) "%")]
@@ -187,7 +210,8 @@
            [:span {:style (:name styles)} name])
          (when (and pct (> min-dim 40))
            [:span {:style (:pct styles)}
-            (gstring/format "%.1f%%" pct)])]])]))
+            (gstring/format "%.1f%%" pct)])]])
+     [pace-tile-marker pace-marker horizontal?]]))
 
 (defn- treemap-sub-rect [{:keys [id name color value tag-ratio tag-color]} rect pct-base hovered-id parent-name filter-path]
   (let [{ix :x iy :y iw :w ih :h} rect
@@ -280,7 +304,8 @@
            [:div {:style {:position "relative" :width (str iw "px") :height (str ih "px")}}
             (doall
              (for [item laid-out]
-               [treemap-sub-rect item (:rect item) sub-pct-base hovered-id cat-name filter-path]))]))])))
+               [treemap-sub-rect item (:rect item) sub-pct-base hovered-id cat-name filter-path]))]))
+       [pace-tile-marker (:pace-marker cat-item) (>= iw ih)]])))
 
 (def hovered-category-id (r/atom nil))
 
@@ -315,7 +340,8 @@
 
       :reagent-render
       (fn [{:keys [categories pct-base show-targets? show-filters?
-                   full-categories period-transactions selected-tag height-ratio]
+                   full-categories period-transactions selected-tag height-ratio
+                   pace-prediction pace-today?]
             :or   {height-ratio 0.5 show-targets? false show-filters? false}}]
         (let [cw @width-atom
               ch (when cw (* cw height-ratio))
@@ -377,10 +403,17 @@
                                             (let [tagged-amt (reduce + 0
                                                                (map #(Math/abs (:amount %))
                                                                     (filter #(some #{tag-id} (:tag-ids %)) cat-txns)))]
-                                              (when (pos? tagged-amt) (/ tagged-amt (:value c)))))]
+                                              (when (pos? tagged-amt) (/ tagged-amt (:value c)))))
+                                       pace-marker (when (and pace-today? (pos? (or (:target c) 0)))
+                                                     (when-let [pc (pace/category-pace pace-prediction (:id c))]
+                                                       (pace/tile-marker pc
+                                                                         (js/Date.)
+                                                                         effective
+                                                                         (:days-in-month pace-prediction))))]
                                    (cond-> (assoc c :area (* va (/ effective total-value)))
                                      (seq sub-items) (assoc :sub-items sub-items)
-                                     (and tr (pos? tr)) (assoc :tag-ratio tr :tag-color tag-color))))
+                                     (and tr (pos? tr)) (assoc :tag-ratio tr :tag-color tag-color)
+                                     pace-marker (assoc :pace-marker pace-marker))))
                                cats))
               laid-out (when (and items (seq items) (pos? vw) (pos? ch))
                          (layout/squarify items {:x 0 :y 0 :w vw :h ch}))]
@@ -431,7 +464,7 @@
 
 (defn- budget-summary-line
   "Summary line above the bar: 'X av Y kr brukt · Z over · W igjen i budsjetterte kategorier'"
-  [{:keys [spent target-sum overuse remaining]}]
+  [{:keys [spent target-sum overuse remaining pace-note]}]
   (let [over? (pos? overuse)]
     [:div {:class "budget-summary-line"}
      [:span
@@ -448,7 +481,11 @@
        [:span
         [:span {:class "budget-summary-sep"} " · "]
         [:span {:class "budget-summary-remaining"} (fmt/format-amount remaining)]
-        " igjen i budsjetterte kategorier"])]))
+        " igjen i budsjetterte kategorier"])
+     (when pace-note
+       [:div {:class "budget-pace-note"
+              :title "Forventet forbruk teller ikke med ukategorisert."}
+        pace-note])]))
 
 (defn- category-spend
   "Absolute spending for one summed category. Expenses are negative, which is
@@ -477,13 +514,14 @@
     (let [categories @(subscribe [:summed-categories])
           period @(subscribe [:period])
           show-targets? @(subscribe [:treemap-show-targets?])
+          prediction @(subscribe [:pace-prediction])
           balance (:available-balance @(subscribe [:balance]))
           single-month? (= :month (:period-type period))]
       (when (and single-month? show-targets?)
-        (budget-summary-bar* categories balance period)))))
+        (budget-summary-bar* categories balance period prediction)))))
 
 (defn- budget-summary-bar*
-  [categories balance period]
+  [categories balance period prediction]
   (let [uncategorized-color "#9ca3af"
         rows (->> categories
                   (remove #(layout/excluded-ids (:id %)))
@@ -522,7 +560,24 @@
         current-month? (and (= :month (:period-type period))
                             (:start period)
                             (= (.getFullYear (:start period)) (.getFullYear now))
-                            (= (.getMonth (:start period)) (.getMonth now)))]
+                            (= (.getMonth (:start period)) (.getMonth now)))
+        pace-now (when current-month? (pace/for-today prediction))
+        budgeted-ids (map :id budgeted)
+        pace-expected (when pace-now (pace/aggregate-expected pace-now budgeted-ids now))
+        pace-band (when pace-now (pace/aggregate-band pace-now budgeted-ids now))
+        pace-frac (when (and pace-expected (pos? total))
+                    (pace/marker-fraction pace-expected total))
+        pace-low (when (and pace-band (pos? total))
+                   (pace/marker-fraction (:low pace-band) total))
+        pace-high (when (and pace-band (pos? total))
+                    (pace/marker-fraction (:high pace-band) total))
+        pace-note (when pace-now
+                    (let [n (or (:days-in-month pace-now) (pace/days-in-month now))
+                          used (+ spent overuse)
+                          pct (if (pos? target-sum)
+                                (Math/round (* 100 (/ used target-sum)))
+                                0)]
+                      (str "Dag " (.getDate now) " av " n " · " pct "% av budsjettet brukt")))]
     (when (pos? total)
       (let [pct (fn [v] (* 100 (/ v total)))
             
@@ -614,7 +669,8 @@
          [budget-summary-line {:spent (+ spent overuse)
                                :target-sum target-sum
                                :overuse overuse
-                               :remaining remaining}]
+                               :remaining remaining
+                               :pace-note pace-note}]
          
          [:div {:class "budget-bar-labels-above"}
           (doall
@@ -630,8 +686,9 @@
                     :title (str (:label seg) " " (fmt/format-amount (:amount seg)))}
               (render-label seg narrow?)]))]
          
-         ^{:key (apply str (interpose "|" (map #(str (:id %) ":" (:amount %)) rows)))}
-         [:div.budget-bar-segments
+         [:div.budget-bar-track
+          ^{:key (apply str (interpose "|" (map #(str (:id %) ":" (:amount %)) rows)))}
+          [:div.budget-bar-segments
           (doall
            (for [c cat-segments
                  :when (pos? (:spent c))]
@@ -688,6 +745,15 @@
                       :flex-basis "0%"
                       :min-width 0
                       :height "100%"}}])]
+          (when (and pace-low pace-high (> (- pace-high pace-low) 0.004))
+            [:div.budget-pace-band {:style {:left (str (* 100 pace-low) "%")
+                                            :width (str (* 100 (- pace-high pace-low)) "%")}
+                                    :title "Usikkerhet i forventet forbruk"}])
+          (when pace-frac
+            [:div.budget-pace-tick {:style {:left (str (* 100 pace-frac) "%")}
+                                    :title (str "Forventet "
+                                                (fmt/format-amount pace-expected)
+                                                " kr i dag")}])]
          
          (when (pos? below-row-count)
            (doall
@@ -754,6 +820,37 @@
                      :white-space "nowrap"}}
       (str (if over? "+" "-") (fmt/format-amount (Math/abs diff-value)))]]))
 
+(defn- pace-detail-card
+  "Spent against the budget, and what today was expected to look like.
+   Shown while a budgeted category is hovered or selected."
+  []
+  (let [hovered @hovered-category-id
+        categories @(subscribe [:summed-categories])
+        filter-path @(subscribe [:filter-path])
+        prediction (pace/for-today @(subscribe [:pace-prediction]))
+        period @(subscribe [:period])
+        now (js/Date.)
+        current-month? (and (= :month (:period-type period))
+                            (:start period)
+                            (= (.getFullYear (:start period)) (.getFullYear now))
+                            (= (.getMonth (:start period)) (.getMonth now)))
+        selected-name (when (>= (count filter-path) 1) (first filter-path))
+        by-id (some #(when (= (str (:id %)) (str hovered)) %) categories)
+        by-name (when selected-name
+                  (some #(when (= (:name %) selected-name) %) categories))
+        cat (or by-id by-name)
+        target (when cat (parse-target (:target cat)))
+        pace-cat (when (and prediction cat) (pace/category-pace prediction (:id cat)))
+        expected (when pace-cat (pace/expected-at pace-cat now (:days-in-month prediction)))
+        spent (when cat
+                (let [amount (:amount cat)]
+                  (if (and (number? amount) (neg? amount)) (Math/abs amount) 0)))]
+    (when (and current-month? target (pos? target) (number? expected))
+      [:div.pace-detail-card
+       [:span.pace-detail-name (:name cat)]
+       (str (fmt/format-amount spent) " av " (fmt/format-amount target)
+            " kr, forventet " (fmt/format-amount expected) " kr i dag")])))
+
 (defn category-treemap
   "Subscribes to :summed-categories. Renders a treemap at full width.
    `Vis budsjett` / `Vis filtre` are now controlled by re-frame state
@@ -771,8 +868,10 @@
           selected-tag @(subscribe [:selected-tag])
           show-targets? @(subscribe [:treemap-show-targets?])
           show-filters? @(subscribe [:treemap-show-filters?])
+          pace-now (pace/for-today @(subscribe [:pace-prediction]))
           single-month? (= :month (:period-type period))
           targets?   (and single-month? show-targets?)
+          pace-today? (and targets? (some? pace-now))
           filters?   show-filters?
             visible    (->> categories
                             (remove #(layout/excluded-ids (:id %)))
@@ -833,7 +932,12 @@
                [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
                 [:div {:style {:width "12px" :height "12px" :border-radius "2px"
                                :background "repeating-linear-gradient(45deg, transparent, transparent 2px, #6b7280 2px, #6b7280 3px)"}}]
-                "Over budsjett"]])
+                "Over budsjett"]
+               (when pace-today?
+                 [:div {:style {:display "flex" :align-items "center" :gap "4px"}
+                        :title "Forventet forbruk teller ikke med ukategorisert."}
+                  [:div.pace-legend-tick]
+                  "Forventet i dag"])])
             (when filters?
               [:div {:style {:display "flex" :align-items "center" :gap "4px"}}
                [:div {:style {:width "12px" :height "12px" :border-radius "2px"
@@ -853,7 +957,10 @@
                    :full-categories      full-categories
                    :period-transactions  period-txns
                    :selected-tag         selected-tag
-                   :height-ratio         height-ratio}]
+                   :height-ratio         height-ratio
+                   :pace-prediction      pace-now
+                   :pace-today?          pace-today?}]
+         [pace-detail-card]
          (when (and tag-value (pos? tag-value) (pos? total-spending))
            (let [bar-pct (min 100 (* 100 (/ tag-value total-spending)))]
              [:div {:style {:position "relative" :height "22px" :margin-top "2px"}}
