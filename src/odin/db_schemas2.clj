@@ -131,6 +131,15 @@
       (.provisionedThroughput (pt 5 5))
       (.build)))
 
+;; One predicted spending curve per user per calendar month.
+(def pace-prediction-schema
+  (-> (CreateTableRequest/builder)
+      (.tableName "PacePrediction")
+      (.keySchema [(ks "UserId" KeyType/HASH) (ks "MonthKey" KeyType/RANGE)])
+      (.attributeDefinitions [(ad "UserId" ScalarAttributeType/S) (ad "MonthKey" ScalarAttributeType/S)])
+      (.provisionedThroughput (pt 5 5))
+      (.build)))
+
 (defn create-table [client]
   (doseq [[name schema] [["Transaction" transaction-schema]
                           ["Category"    category-schema]
@@ -143,7 +152,8 @@
                           ["InvestmentTransaction" investment-schema]
                           ["GroceryItem" grocery-schema]
                           ["SecurityPrice" security-price-schema]
-                          ["SecuritySetting" security-setting-schema]]]
+                          ["SecuritySetting" security-setting-schema]
+                          ["PacePrediction" pace-prediction-schema]]]
     (try
       (let [response (.createTable client schema)]
         (println name "table created:" response))

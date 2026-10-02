@@ -1104,6 +1104,100 @@ tr.txn-row > td {
   min-width: 0;
 }
 
+/* Pace tick sits beside the bar. The segments row clips overflow, so the
+   tick and the uncertainty band are siblings of that row. */
+.budget-bar-track {
+  position: relative;
+}
+.budget-pace-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: #1c140c;
+  box-shadow: 0 0 0 1px #fff;
+  pointer-events: none;
+  z-index: 2;
+}
+.budget-pace-band {
+  position: absolute;
+  top: 0;
+  height: 12px;
+  background: rgba(28, 20, 12, 0.16);
+  pointer-events: none;
+  z-index: 1;
+}
+[data-theme="dark"] .budget-pace-tick {
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85);
+}
+[data-theme="dark"] .budget-pace-band {
+  background: rgba(255, 255, 255, 0.22);
+}
+.budget-pace-note {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* Tile pace mark. White with a dark edge so it shows on both the solid
+   spent colour and the light remaining colour. */
+.pace-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  z-index: 2;
+}
+.pace-tick-h {
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 2px;
+  margin-left: 0;
+  margin-top: -1px;
+}
+.pace-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.32);
+  pointer-events: none;
+  z-index: 1;
+}
+.pace-band-h {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: auto;
+  width: auto;
+}
+.pace-legend-tick {
+  width: 2px;
+  height: 12px;
+  background: #1c140c;
+  box-shadow: 0 0 0 1px #fff;
+  border-radius: 1px;
+}
+[data-theme="dark"] .pace-legend-tick {
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85);
+}
+.pace-detail-card {
+  margin: 8px 0 2px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.pace-detail-name {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
 /* Remaining segment: light faded green, visible in both themes.
    Inset shadow instead of a border so it doesn't change the slice width. */
 .budget-bar-seg-remaining {
